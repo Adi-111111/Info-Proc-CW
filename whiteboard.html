@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Collaborative Whiteboard</title>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+  <style>
+    body { margin: 0; }
+    canvas { border: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+
+<canvas id="board" width="1000" height="600"></canvas>
+
+<script>
+const SERVER_URL = "http://13.40.61.155:5000";
+const BOARD_ID = "board1";
+
+const socket = io(SERVER_URL);
+const canvas = new fabric.Canvas("board");
+
+// ========================
+// CONNECTION
+// ========================
+
+socket.on("connect", () => {
+  console.log("Connected:", socket.id);
+  socket.emit("join_board", { board_id: BOARD_ID });
+});
+
+socket.on("LOAD_BOARD", (data) => {
+  console.log("Loading board");
+  canvas.clear();
+  for (const id in data) {
+    renderObject(data[id]);
+  }
+});
+
+socket.on("board_event", (msg) => {
+  const { event, payload } = msg;
+
+  if (event === "ADD_OBJECT") {
+    renderObject(payload);
+  }
+
+  if (event === "REMOVE_OBJECT") {
+    removeObject(payload.object_id);
+  }
+});
+
+// ========================
+// RENDERING
+// ========================
+
+function renderObject(obj) {
+  if (obj.type === "stroke") {
+    const pathData = pointsToPath(obj.points);
+
+    const path = new fabric.Path(pathData, {
+      stroke: "black",
+      fill: "",
+      strokeWidth: 3,
+      objectId: obj.object_id
+    });
+
+    canvas.add(path);
+  }
+
+  if (obj.type === "rect") {
+    const rect = new fabric.Rect({
+      left: obj.x,
+      top: obj.y,
+      width: obj.width,
+      height: obj.height,
+      stroke: "black",
+      fill: "transparent",
+      objectId: obj.object_id
+    });
+
+    canvas.add(rect);
+  }
+}
+
+function removeObject(id) {
+  const obj = canvas.getObjects().find(o => o.objectId === id);
+  if (obj) canvas.remove(obj);
+}
+
+function pointsToPath(points) {
+  let path = `M ${points[0][0]} ${points[0][1]}`;
+  for (let i = 1; i < points.length; i++) {
+    path += ` L ${points[i][0]} ${points[i][1]}`;
+  }
+  return path;
+}
+</script>
+
+</body>
+</html>

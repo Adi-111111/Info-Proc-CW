@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Whiteboard Test Client</title>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+</head>
+<body>
+
+<h2>Test Client</h2>
+
+<button onclick="addObject()">Add Object</button>
+<button onclick="removeObject()">Remove Object</button>
+
+<pre id="log"></pre>
+
+<script>
+const SERVER_URL = "http://13.40.61.155:5000"; 
+// EC2 IP 
+
+const socket = io(SERVER_URL);
+
+function log(msg) {
+  document.getElementById("log").textContent += msg + "\n";
+}
+
+// Connect to server
+socket.on("connect", () => {
+  log("Connected: " + socket.id);
+
+  socket.emit("join_board", {
+    board_id: "board1"
+  });
+});
+
+// Receive full board state
+socket.on("LOAD_BOARD", data => {
+  log("LOAD_BOARD received:");
+  log(JSON.stringify(data, null, 2));
+});
+
+// Receive events from server
+socket.on("board_event", msg => {
+  log("board_event received:");
+  log(JSON.stringify(msg, null, 2));
+});
+
+// Send ADD_OBJECT event
+function addObject() {
+  const object = {
+    object_id: "obj_" + Math.floor(Math.random()*10000),
+    type: "stroke",
+    points: [[Math.floor(Math.random()*500), Math.floor(Math.random()*500)],
+             [Math.floor(Math.random()*500), Math.floor(Math.random()*500)]]
+  };
+
+  socket.emit("board_event", {
+    event: "ADD_OBJECT",
+    payload: object
+  });
+
+  log("Sent ADD_OBJECT");
+}
+
+// Send REMOVE_OBJECT event
+function removeObject() {
+  const id = prompt("Enter object_id to remove:");
+
+  socket.emit("board_event", {
+    event: "REMOVE_OBJECT",
+    payload: { object_id: id }
+  });
+
+  log("Sent REMOVE_OBJECT");
+}
+</script>
+
+</body>
+</html>
