@@ -244,7 +244,7 @@ landmarker = vision.HandLandmarker.create_from_options(options)
 # =========================================================
 def open_camera():
     for idx in range(2):
-        cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)
+        cap = cv2.VideoCapture(idx)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         ok, frame = cap.read()
