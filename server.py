@@ -124,4 +124,54 @@ async def board_event(sid, message):
     except Exception:
         logger.exception("Error handling board_event")
 
+
+@sio.event
+async def shape_event(sid, data):
+    """
+    Accepts mediapipe-style shape payloads:
+      { "id": str, "timestamp": float, "type": "polyline"|"rectangle", "params": {...} }
+    Normalises to ADD_OBJECT and broadcasts.
+    """
+    now = time.time()
+    if sid in last_event_time and now - last_event_time[sid] < 0.02:
+        return
+    last_event_time[sid] = now
+
+    try:
+        obj_id = data.get("id")
+        obj_type = data.get("type")
+        params = data.get("params", {})
+
+        if not obj_id or not obj_type:
+            logger.warning(f"Invalid shape_event from {sid}: missing id or type")
+            return
+
+        session = await sio.get_session(sid)
+        board_id = session.get("board_id")
+
+        if board_id not in boards:
+            boards[board_id] = {}
+
+        if len(boards[board_id]) > MAX_OBJECTS:
+            logger.warning("Board object limit reached")
+            return
+
+        payload = {"object_id": obj_id, "type": obj_type}
+
+        if obj_type == "polyline":
+            payload["points"] = [[float(p[0]), float(p[1])] for p in params.get("points", [])]
+        elif obj_type == "rectangle":
+            payload["corners"] = [[float(p[0]), float(p[1])] for p in params.get("corners", [])]
+        else:
+            logger.warning(f"Unknown shape type from shape_event: {obj_type}")
+            return
+
+        boards[board_id][obj_id] = payload
+        await sio.emit("board_event", {"event": "ADD_OBJECT", "payload": payload})
+        logger.info(f"shape_event: added {obj_type} {obj_id}")
+
+    except Exception:
+        logger.exception("Error handling shape_event")
+
+
 web.run_app(app, port=5000)

@@ -82,6 +82,32 @@ function renderObject(obj) {
 
     canvas.add(rect);
   }
+
+  if (obj.type === "polyline") {
+    const pathData = pointsToPath(obj.points);
+
+    const path = new fabric.Path(pathData, {
+      stroke: "black",
+      fill: "",
+      strokeWidth: 3,
+      objectId: obj.object_id
+    });
+
+    canvas.add(path);
+  }
+
+  if (obj.type === "rectangle") {
+    const pts = obj.corners.map(c => ({ x: c[0], y: c[1] }));
+
+    const poly = new fabric.Polygon(pts, {
+      stroke: "black",
+      fill: "transparent",
+      strokeWidth: 3,
+      objectId: obj.object_id
+    });
+
+    canvas.add(poly);
+  }
 }
 
 function removeObject(id) {

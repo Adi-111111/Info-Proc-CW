@@ -8,7 +8,9 @@
 
 <h2>Test Client</h2>
 
-<button onclick="addObject()">Add Object</button>
+<button onclick="addObject()">Add Object (stroke)</button>
+<button onclick="addLine()">Add Line (polyline)</button>
+<button onclick="addRectangle()">Add Rectangle</button>
 <button onclick="removeObject()">Remove Object</button>
 
 <pre id="log"></pre>
@@ -59,6 +61,55 @@ function addObject() {
   });
 
   log("Sent ADD_OBJECT");
+}
+
+// Send ADD_OBJECT with a two-point polyline (line)
+function addLine() {
+  const points = [
+    [Math.floor(Math.random() * 800), Math.floor(Math.random() * 500)],
+    [Math.floor(Math.random() * 800), Math.floor(Math.random() * 500)]
+  ];
+
+  const object = {
+    object_id: "obj_" + Math.floor(Math.random() * 10000),
+    type: "polyline",
+    points: points
+  };
+
+  socket.emit("board_event", {
+    event: "ADD_OBJECT",
+    payload: object
+  });
+
+  log("Sent ADD_LINE (polyline)");
+}
+
+// Send ADD_OBJECT with a rotated rectangle (4 corners)
+function addRectangle() {
+  const cx = Math.floor(Math.random() * 600) + 100;
+  const cy = Math.floor(Math.random() * 400) + 50;
+  const hw = Math.floor(Math.random() * 80) + 40;
+  const hh = Math.floor(Math.random() * 60) + 30;
+  const angle = (Math.random() - 0.5) * 0.5;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+
+  const corners = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([dx, dy]) => [
+    Math.round(cx + dx * cos - dy * sin),
+    Math.round(cy + dx * sin + dy * cos)
+  ]);
+
+  const object = {
+    object_id: "obj_" + Math.floor(Math.random() * 10000),
+    type: "rectangle",
+    corners: corners
+  };
+
+  socket.emit("board_event", {
+    event: "ADD_OBJECT",
+    payload: object
+  });
+
+  log("Sent ADD_RECTANGLE");
 }
 
 // Send REMOVE_OBJECT event
