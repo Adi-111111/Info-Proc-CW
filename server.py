@@ -11,36 +11,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def validate_message(message):
-    if not isinstance(message, dict):
-        return False, "Message must be a dictionary"
-
-    if "event" not in message:
-        return False, "Missing 'event' field"
-
-    if "payload" not in message:
-        return False, "Missing 'payload' field"
-
-    if message["event"] not in ["ADD_OBJECT", "REMOVE_OBJECT"]:
-        return False, "Invalid event type"
-
-    payload = message["payload"]
-
-    if not isinstance(payload, dict):
-        return False, "Payload must be a dictionary"
-
-    if message["event"] == "ADD_OBJECT":
-        required = ["object_id", "type"]
-        for field in required:
-            if field not in payload:
-                return False, f"Missing '{field}' in payload"
-
-    if message["event"] == "REMOVE_OBJECT":
-        if "object_id" not in payload:
-            return False, "Missing 'object_id' in REMOVE_OBJECT"
-
-    return True, None
-
 # Create Socket.IO server
 sio = socketio.AsyncServer(
     cors_allowed_origins='*',
@@ -50,18 +20,16 @@ sio = socketio.AsyncServer(
 app = web.Application()
 sio.attach(app)
 
-# In-memory board storage
-# So far we are emulating multi-board capacity- in practice we always use "board1", can adjust the code for this if needed.
-# May need to adjust some parts to use DEFAULT_BOARD rather than reading board_id from the client.
 boards = {}
 DEFAULT_BOARD = "board1"
 boards[DEFAULT_BOARD] = {}
 
-# Connected clients list
 connected_clients = set()
-
-# Adding basic rate limiting
 last_event_time = {}
+
+# =========================
+# CLIENT CONNECT
+# =========================
 
 @sio.event
 async def connect(sid, environ):
@@ -73,42 +41,43 @@ async def disconnect(sid):
     connected_clients.discard(sid)
     logger.info(f"Client disconnected: {sid}")
 
+# =========================
+# JOIN BOARD
+# =========================
+
 @sio.event
 async def join_board(sid, data):
+
     board_id = data["board_id"]
+
     if board_id not in boards:
         boards[board_id] = {}
+
     await sio.save_session(sid, {"board_id": board_id})
+
+    # 🔴 THIS WAS MISSING
+    await sio.enter_room(sid, board_id)
+
     logger.info(f"{sid} joined {board_id}")
 
-    # Send existing board state
     await sio.emit("LOAD_BOARD", boards[board_id], to=sid)
+
+# =========================
+# NORMAL BOARD EVENTS
+# =========================
 
 @sio.event
 async def board_event(sid, message):
 
     now = time.time()
     if sid in last_event_time and now - last_event_time[sid] < 0.02:
-        # Ignore events faster than 50Hz
         return
     last_event_time[sid] = now
 
     try:
-        valid, error = validate_message(message)
-        if not valid:
-            logger.warning(f"Invalid message from {sid}: {error}")
-            return
 
         session = await sio.get_session(sid)
         board_id = session.get("board_id")
-
-        if board_id not in boards:
-            boards[board_id] = {}
-
-        # Adding maximum object count protection
-        if len(boards[board_id]) > MAX_OBJECTS:
-            logger.warning("Board object limit reached")
-            return
 
         event = message["event"]
         payload = message["payload"]
@@ -119,59 +88,77 @@ async def board_event(sid, message):
         elif event == "REMOVE_OBJECT":
             boards[board_id].pop(payload["object_id"], None)
 
-        await sio.emit("board_event", message)
+        # 🔴 BROADCAST ONLY TO BOARD ROOM
+        await sio.emit(
+            "board_event",
+            message,
+            room=board_id
+        )
 
     except Exception:
         logger.exception("Error handling board_event")
 
+# =========================
+# SHAPE EVENT (FROM PYNQ)
+# =========================
 
 @sio.event
 async def shape_event(sid, data):
-    """
-    Accepts mediapipe-style shape payloads:
-      { "id": str, "timestamp": float, "type": "polyline"|"rectangle", "params": {...} }
-    Normalises to ADD_OBJECT and broadcasts.
-    """
+
     now = time.time()
     if sid in last_event_time and now - last_event_time[sid] < 0.02:
         return
     last_event_time[sid] = now
 
     try:
+
         obj_id = data.get("id")
         obj_type = data.get("type")
         params = data.get("params", {})
 
         if not obj_id or not obj_type:
-            logger.warning(f"Invalid shape_event from {sid}: missing id or type")
+            logger.warning("Invalid shape_event")
             return
 
         session = await sio.get_session(sid)
         board_id = session.get("board_id")
 
-        if board_id not in boards:
-            boards[board_id] = {}
-
-        if len(boards[board_id]) > MAX_OBJECTS:
-            logger.warning("Board object limit reached")
-            return
-
-        payload = {"object_id": obj_id, "type": obj_type}
+        payload = {
+            "object_id": obj_id,
+            "type": obj_type
+        }
 
         if obj_type == "polyline":
-            payload["points"] = [[float(p[0]), float(p[1])] for p in params.get("points", [])]
+            payload["points"] = params.get("points", [])
+
         elif obj_type == "rectangle":
-            payload["corners"] = [[float(p[0]), float(p[1])] for p in params.get("corners", [])]
+            payload["corners"] = params.get("corners", [])
+
         else:
-            logger.warning(f"Unknown shape type from shape_event: {obj_type}")
+            logger.warning(f"Unknown shape type: {obj_type}")
             return
 
         boards[board_id][obj_id] = payload
-        await sio.emit("board_event", {"event": "ADD_OBJECT", "payload": payload})
-        logger.info(f"shape_event: added {obj_type} {obj_id}")
+
+        message = {
+            "event": "ADD_OBJECT",
+            "payload": payload
+        }
+
+        # 🔴 BROADCAST TO BOARD ROOM
+        await sio.emit(
+            "board_event",
+            message,
+            room=board_id
+        )
+
+        logger.info(f"shape_event → broadcast {obj_type}")
 
     except Exception:
         logger.exception("Error handling shape_event")
 
+# =========================
+# RUN SERVER
+# =========================
 
 web.run_app(app, port=5000)

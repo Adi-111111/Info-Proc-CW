@@ -51,12 +51,46 @@ socket.on("board_event", (msg) => {
   }
 });
 
+socket.on("board_event", msg => {
+  console.log("BOARD EVENT:",msg);
+})
+
 // ========================
 // RENDERING
 // ========================
 
 function renderObject(obj) {
-  if (obj.type === "stroke") {
+
+  console.log("OBJECT RECEIVED:", obj);
+
+  // ----------------------------
+  // Convert PYNQ format → board
+  // ----------------------------
+  if (obj.params) {
+
+    obj.object_id = obj.id;
+
+    if ("points" in obj.params) {
+      obj.points = obj.params.points;
+    }
+
+    if ("corners" in obj.params) {
+      obj.corners = obj.params.corners;
+    }
+
+    if ("cx" in obj.params) {
+      obj.cx = obj.params.cx;
+      obj.cy = obj.params.cy;
+      obj.r  = obj.params.r;
+    }
+  }
+  // ----------------------------
+  // POLYLINE
+  // ----------------------------
+  if (obj.type === "polyline" || obj.type === "stroke") {
+
+    if (!obj.points) return;
+
     const pathData = pointsToPath(obj.points);
 
     const path = new fabric.Path(pathData, {
@@ -69,35 +103,20 @@ function renderObject(obj) {
     canvas.add(path);
   }
 
-  if (obj.type === "rect") {
-    const rect = new fabric.Rect({
-      left: obj.x,
-      top: obj.y,
-      width: obj.width,
-      height: obj.height,
-      stroke: "black",
-      fill: "transparent",
-      objectId: obj.object_id
-    });
-
-    canvas.add(rect);
-  }
-
-  if (obj.type === "polyline") {
-    const pathData = pointsToPath(obj.points);
-
-    const path = new fabric.Path(pathData, {
-      stroke: "black",
-      fill: "",
-      strokeWidth: 3,
-      objectId: obj.object_id
-    });
-
-    canvas.add(path);
-  }
-
+  // ----------------------------
+  // RECTANGLE
+  // ----------------------------
   if (obj.type === "rectangle") {
-    const pts = obj.corners.map(c => ({ x: c[0], y: c[1] }));
+
+    if (!obj.corners) {
+      console.warn("Rectangle missing corners:", obj);
+      return;
+    }
+
+    const pts = obj.corners.map(c => ({
+      x: c[0],
+      y: c[1]
+    }));
 
     const poly = new fabric.Polygon(pts, {
       stroke: "black",
@@ -108,6 +127,28 @@ function renderObject(obj) {
 
     canvas.add(poly);
   }
+
+  // ----------------------------
+  // CIRCLE
+  // ----------------------------
+  if (obj.type === "circle") {
+
+    if (obj.cx === undefined) return;
+
+    const circle = new fabric.Circle({
+      left: obj.cx - obj.r,
+      top: obj.cy - obj.r,
+      radius: obj.r,
+      stroke: "black",
+      fill: "transparent",
+      strokeWidth: 3,
+      objectId: obj.object_id
+    });
+
+    canvas.add(circle);
+  }
+
+  canvas.renderAll();
 }
 
 function removeObject(id) {

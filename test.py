@@ -6,9 +6,32 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
+import socket 
+import json
+
+#PYNQ UDP CONNECTION
+PYNQ_IP = "192.168.2.99"
+PYNQ_PORT = 5005
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+pynq_addr = (PYNQ_IP, PYNQ_PORT)
+
 # =========================================================
 # Helpers
 # =========================================================
+def send_stroke_to_pynq(points): 
+    #Send stroke points to the pynq as JSON
+
+    data = { 
+        "stroke": [[int(p[0]), int(p[1])] for p in points]
+    }
+
+    payload = json.dumps(data).encode("utf-8")
+
+    sock.sendto(payload, pynq_addr)
+
+    print(f"[udp] sent stroke with {len(points)} points to PYNQ")
+
 def dist(a, b):
     return float(np.hypot(a[0] - b[0], a[1] - b[1]))
 
@@ -227,7 +250,7 @@ VIEW_SCALE_MAX = 3.0
 # =========================================================
 # MediaPipe
 # =========================================================
-model_path = "hand_landmarker.task"
+model_path = "preliminary/hand_landmarker.task"
 base_options = python.BaseOptions(model_asset_path=model_path)
 options = vision.HandLandmarkerOptions(
     base_options=base_options,
@@ -244,7 +267,7 @@ landmarker = vision.HandLandmarker.create_from_options(options)
 # =========================================================
 def open_camera():
     for idx in range(2):
-        cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)
+        cap = cv2.VideoCapture(idx)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         ok, frame = cap.read()
@@ -299,6 +322,8 @@ t0 = time.time()
 # Main loop
 # =========================================================
 while True:
+    #print("main loop running")
+
     ok, frame = cap.read()
     if not ok or frame is None:
         time.sleep(0.05)
@@ -459,6 +484,10 @@ while True:
         shape_buffer = current[:]
         shape_timer = time.time()
         strokes.append(current)
+
+        print("[stroke] finished drawing")
+        send_stroke_to_pynq(current)
+
         current = []
         still_time = 0.0
 
@@ -562,6 +591,13 @@ while True:
     cv2.putText(display,
                 "Two open palms: pan + zoom (move hands apart/together)",
                 (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    cv2.putText(display,
+            f"PYNQ → {PYNQ_IP}:{PYNQ_PORT}",
+            (20, 140),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0,255,255),
+            2)
 
     cv2.imshow("Hand CAD (Undo/Eraser/Grid + Two-hand Zoom/Pan)", display)
 
