@@ -78,7 +78,11 @@ function renderObject(obj) {
       obj.corners = obj.params.corners;
     }
 
-    if ("cx" in obj.params) {
+    if ("center" in obj.params) {
+      obj.cx = obj.params.center[0];
+      obj.cy = obj.params.center[1];
+      obj.r  = obj.params.radius;
+    } else if ("cx" in obj.params) {
       obj.cx = obj.params.cx;
       obj.cy = obj.params.cy;
       obj.r  = obj.params.r;
@@ -106,7 +110,7 @@ function renderObject(obj) {
   // ----------------------------
   // RECTANGLE
   // ----------------------------
-  if (obj.type === "rectangle") {
+  if (obj.type === "rectangle" || obj.type === "rect") {
 
     if (!obj.corners) {
       console.warn("Rectangle missing corners:", obj);
