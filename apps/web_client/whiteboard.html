@@ -1,26 +1,137 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Collaborative Whiteboard</title>
+<title>Collaborative Whiteboard</title>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
-  <style>
-    body { margin: 0; }
-    canvas { border: 1px solid #ccc; }
-  </style>
+<style>
+
+body{
+  margin:0;
+  overflow:hidden;
+  font-family:Arial, sans-serif;
+}
+
+/* main container */
+
+#app{
+  position:relative;
+  width:100vw;
+  height:100vh;
+  background:#f5f5f5;
+}
+
+/* WHITEBOARD */
+
+#board{
+  position:absolute;
+  top:0;
+  left:0;
+  width:100%;
+  height:100%;
+  background:white;
+}
+
+/* CAMERA FLOATING WINDOW */
+
+#camera-window{
+
+  position:absolute;
+
+  bottom:20px;
+  right:20px;
+
+  width:420px;
+  aspect-ratio:16/9;
+
+  background:black;
+
+  border-radius:10px;
+
+  overflow:hidden;
+
+  box-shadow:0 8px 25px rgba(0,0,0,0.3);
+
+  border:2px solid white;
+
+  cursor: grab;
+  user-select: none;
+
+  resize: both;
+}
+
+/* camera stream */
+
+#cv-stream{
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+
+/* small label */
+
+#camera-label{
+
+  position:absolute;
+  top:8px;
+  left:8px;
+
+  font-size:12px;
+
+  color:white;
+
+  background:rgba(0,0,0,0.6);
+
+  padding:3px 6px;
+
+  border-radius:4px;
+}
+
+</style>
 </head>
+
 <body>
 
-<canvas id="board" width="1000" height="600"></canvas>
+
+<div id="app">
+
+  <!-- WHITEBOARD (main UI) -->
+  <canvas id="board"></canvas>
+
+  <!-- FLOATING CAMERA WINDOW -->
+  <div id="camera-window">
+      <img id="cv-stream" src="http://127.0.0.1:8000/video">
+      <div id="camera-label">Interaction Camera</div>
+  </div>
+
+</div>
+
+
 
 <script>
+
 const SERVER_URL = "http://13.40.61.155:5000";
 const BOARD_ID = "board1";
 
 const socket = io(SERVER_URL);
-const canvas = new fabric.Canvas("board");
+const canvas = new fabric.Canvas("board", {
+  selection:false
+});
+
+resizeCanvas();
+
+window.addEventListener("resize", resizeCanvas);
+
+function resizeCanvas(){
+
+  canvas.setWidth(window.innerWidth);
+  canvas.setHeight(window.innerHeight);
+
+  canvas.renderAll();
+}
+
 
 // ========================
 // CONNECTION
@@ -31,142 +142,215 @@ socket.on("connect", () => {
   socket.emit("join_board", { board_id: BOARD_ID });
 });
 
+
 socket.on("LOAD_BOARD", (data) => {
+
   console.log("Loading board");
+
   canvas.clear();
-  for (const id in data) {
+
+  for (const id in data){
     renderObject(data[id]);
   }
+
 });
 
+
 socket.on("board_event", (msg) => {
+
   const { event, payload } = msg;
 
-  if (event === "ADD_OBJECT") {
+  if (event === "ADD_OBJECT"){
     renderObject(payload);
   }
 
-  if (event === "REMOVE_OBJECT") {
+  if (event === "REMOVE_OBJECT"){
     removeObject(payload.object_id);
   }
+
 });
 
+
 socket.on("board_event", msg => {
-  console.log("BOARD EVENT:",msg);
-})
+  console.log("BOARD EVENT:", msg);
+});
+
 
 // ========================
 // RENDERING
 // ========================
 
-function renderObject(obj) {
+function renderObject(obj){
 
   console.log("OBJECT RECEIVED:", obj);
 
-  // ----------------------------
-  // Convert PYNQ format → board
-  // ----------------------------
-  if (obj.params) {
+  // Convert PYNQ format → board format
+  if (obj.params){
 
     obj.object_id = obj.id;
 
-    if ("points" in obj.params) {
+    if ("points" in obj.params)
       obj.points = obj.params.points;
-    }
 
-    if ("corners" in obj.params) {
+    if ("corners" in obj.params)
       obj.corners = obj.params.corners;
-    }
 
-    if ("center" in obj.params) {
+    if ("center" in obj.params){
+
       obj.cx = obj.params.center[0];
       obj.cy = obj.params.center[1];
       obj.r  = obj.params.radius;
-    } else if ("cx" in obj.params) {
+
+    }
+    else if ("cx" in obj.params){
+
       obj.cx = obj.params.cx;
       obj.cy = obj.params.cy;
       obj.r  = obj.params.r;
+
     }
+
   }
-  // ----------------------------
+
+  // ====================
   // POLYLINE
-  // ----------------------------
-  if (obj.type === "polyline" || obj.type === "stroke") {
+  // ====================
+
+  if (obj.type === "polyline" || obj.type === "stroke"){
 
     if (!obj.points) return;
 
     const pathData = pointsToPath(obj.points);
 
-    const path = new fabric.Path(pathData, {
-      stroke: "black",
-      fill: "",
-      strokeWidth: 3,
-      objectId: obj.object_id
+    const path = new fabric.Path(pathData,{
+      stroke:"black",
+      fill:"",
+      strokeWidth:3,
+      objectId:obj.object_id
     });
 
     canvas.add(path);
   }
 
-  // ----------------------------
-  // RECTANGLE
-  // ----------------------------
-  if (obj.type === "rectangle" || obj.type === "rect") {
 
-    if (!obj.corners) {
+  // ====================
+  // RECTANGLE
+  // ====================
+
+  if (obj.type === "rectangle" || obj.type === "rect"){
+
+    if (!obj.corners){
       console.warn("Rectangle missing corners:", obj);
       return;
     }
 
     const pts = obj.corners.map(c => ({
-      x: c[0],
-      y: c[1]
+      x:c[0],
+      y:c[1]
     }));
 
-    const poly = new fabric.Polygon(pts, {
-      stroke: "black",
-      fill: "transparent",
-      strokeWidth: 3,
-      objectId: obj.object_id
+    const poly = new fabric.Polygon(pts,{
+      stroke:"black",
+      fill:"transparent",
+      strokeWidth:3,
+      objectId:obj.object_id
     });
 
     canvas.add(poly);
   }
 
-  // ----------------------------
+
+  // ====================
   // CIRCLE
-  // ----------------------------
-  if (obj.type === "circle") {
+  // ====================
+
+  if (obj.type === "circle"){
 
     if (obj.cx === undefined) return;
 
     const circle = new fabric.Circle({
-      left: obj.cx - obj.r,
-      top: obj.cy - obj.r,
-      radius: obj.r,
-      stroke: "black",
-      fill: "transparent",
-      strokeWidth: 3,
-      objectId: obj.object_id
+      left:obj.cx - obj.r,
+      top:obj.cy - obj.r,
+      radius:obj.r,
+      stroke:"black",
+      fill:"transparent",
+      strokeWidth:3,
+      objectId:obj.object_id
     });
 
     canvas.add(circle);
   }
 
   canvas.renderAll();
+
 }
 
-function removeObject(id) {
+
+function removeObject(id){
+
   const obj = canvas.getObjects().find(o => o.objectId === id);
-  if (obj) canvas.remove(obj);
+
+  if (obj)
+    canvas.remove(obj);
+
 }
 
-function pointsToPath(points) {
+
+function pointsToPath(points){
+
   let path = `M ${points[0][0]} ${points[0][1]}`;
-  for (let i = 1; i < points.length; i++) {
+
+  for (let i=1;i<points.length;i++){
     path += ` L ${points[i][0]} ${points[i][1]}`;
   }
+
   return path;
+
 }
+
+
+// ========================
+// DRAGGABLE CAMERA WINDOW
+// ========================
+
+const camWindow = document.getElementById("camera-window");
+
+let isDragging = false;
+let offsetX = 0;
+let offsetY = 0;
+
+camWindow.addEventListener("mousedown", (e) => {
+
+  isDragging = true;
+
+  const rect = camWindow.getBoundingClientRect();
+
+  offsetX = e.clientX - rect.left;
+  offsetY = e.clientY - rect.top;
+
+  camWindow.style.cursor = "grabbing";
+
+});
+
+document.addEventListener("mousemove", (e) => {
+
+  if(!isDragging) return;
+
+  camWindow.style.left = (e.clientX - offsetX) + "px";
+  camWindow.style.top = (e.clientY - offsetY) + "px";
+
+  camWindow.style.right = "auto";
+  camWindow.style.bottom = "auto";
+
+});
+
+document.addEventListener("mouseup", () => {
+
+  isDragging = false;
+  camWindow.style.cursor = "grab";
+
+});
+
 </script>
 
 </body>

@@ -9,12 +9,16 @@ from mediapipe.tasks.python import vision
 import socket 
 import json
 
+from flask import Flask, Response
+import threading
+
 #PYNQ UDP CONNECTION
 PYNQ_IP = "192.168.2.99"
 PYNQ_PORT = 5005
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 pynq_addr = (PYNQ_IP, PYNQ_PORT)
+
 
 # =========================================================
 # Helpers
@@ -240,7 +244,7 @@ ERASER_RADIUS_WORLD = 35  # in world pixels
 
 # Grid
 GRID_SIZE = 25
-SHOW_GRID = True
+SHOW_GRID = False
 GRID_SNAP = False
 
 # Zoom/pan
@@ -250,7 +254,7 @@ VIEW_SCALE_MAX = 3.0
 # =========================================================
 # MediaPipe
 # =========================================================
-model_path = "preliminary/hand_landmarker.task"
+model_path = "capture_client/hand_landmarker.task"
 base_options = python.BaseOptions(model_asset_path=model_path)
 options = vision.HandLandmarkerOptions(
     base_options=base_options,
@@ -282,6 +286,35 @@ if cap is None:
     print("No camera found.")
     raise SystemExit(1)
 print("Using camera index:", cam_idx)
+
+# Flask app
+
+app = Flask(__name__)
+latest_frame = None
+
+def generate_frames():
+    global latest_frame
+
+    while True:
+        if latest_frame is None:
+            time.sleep(0.01)
+            continue
+
+        ret, buffer = cv2.imencode('.jpg', latest_frame, [cv2.IMWRITE_JPEG_QUALITY, 70]) # improve latency
+        frame = buffer.tobytes()
+
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        
+@app.route('/video')
+def video_feed():
+    return Response(generate_frames(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
+def run_server():
+    app.run(host="0.0.0.0", port=8000, threaded=True)
+
+threading.Thread(target=run_server, daemon=True).start()
 
 # =========================================================
 # State
@@ -318,6 +351,9 @@ twohand_prev_dist = None
 
 t0 = time.time()
 
+
+
+
 # =========================================================
 # Main loop
 # =========================================================
@@ -343,7 +379,12 @@ while True:
     last_t = t
 
     # ---- MediaPipe ----
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    # improve latency
+
+    small = cv2.resize(frame, (640, 360))
+
+    rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
     ts_ms = int((t - t0) * 1000)
     result = landmarker.detect_for_video(mp_image, ts_ms)
@@ -599,7 +640,7 @@ while True:
             (0,255,255),
             2)
 
-    cv2.imshow("Hand CAD (Undo/Eraser/Grid + Two-hand Zoom/Pan)", display)
+    latest_frame = display
 
     k = cv2.waitKey(1) & 0xFF
     if k == 27:
