@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import time
+import os
 
 import mediapipe as mp
 from mediapipe.tasks import python
@@ -8,6 +9,11 @@ from mediapipe.tasks.python import vision
 
 import socket 
 import json
+from pathlib import Path
+import sys
+
+sys.path.append(str(Path(__file__).resolve().parents[1] / "shape_classifier"))
+from preprocess import preprocess, preprocess_to_vector
 
 #PYNQ UDP CONNECTION
 PYNQ_IP = "192.168.2.99"
@@ -31,6 +37,26 @@ def send_stroke_to_pynq(points):
     sock.sendto(payload, pynq_addr)
 
     print(f"[udp] sent stroke with {len(points)} points to PYNQ")
+
+def save_stroke_locally(points, label="test", root="dataset"):
+    import os
+    import json
+    import time
+
+    folder = os.path.join(root, label)
+    os.makedirs(folder, exist_ok=True)
+
+    timestamp = int(time.time() * 1000)
+    filename = os.path.join(folder, f"{label}_{timestamp}.json")
+
+    data = {
+        "stroke": [[int(p[0]), int(p[1])] for p in points]
+    }
+
+    with open(filename, "w") as f:
+        json.dump(data, f, indent=2)
+
+    print(f"[save] saved {filename}")
 
 def dist(a, b):
     return float(np.hypot(a[0] - b[0], a[1] - b[1]))
@@ -250,8 +276,13 @@ VIEW_SCALE_MAX = 3.0
 # =========================================================
 # MediaPipe
 # =========================================================
-model_path = "preliminary/hand_landmarker.task"
-base_options = python.BaseOptions(model_asset_path=model_path)
+BASE_DIR = Path(__file__).resolve().parent
+model_path = BASE_DIR / "hand_landmarker.task"
+
+print("Model path:", model_path)
+print("Exists:", model_path.exists())
+
+base_options = python.BaseOptions(model_asset_path=str(model_path))
 options = vision.HandLandmarkerOptions(
     base_options=base_options,
     running_mode=vision.RunningMode.VIDEO,
@@ -481,15 +512,31 @@ while True:
     # Pen-up: store the stroke, recognise AFTER pause
     # =====================================================
     if (not pen_down) and pen_down_prev and current:
-        shape_buffer = current[:]
-        shape_timer = time.time()
-        strokes.append(current)
+        if len(current) < 5:
+            print("[stroke] ignored: too short")
+            current = []
+            still_time = 0.0
+        else:
+            shape_buffer = current[:]
+            shape_timer = time.time()
+            strokes.append(current)
 
-        print("[stroke] finished drawing")
-        send_stroke_to_pynq(current)
+            print("[stroke] first 10 points:", current[:10])
+            print("[stroke] total points:", len(current))
+            save_stroke_locally(current, label="circle", root="holdout_test")
+            send_stroke_to_pynq(current)
+            print("[stroke] finished drawing")
 
-        current = []
-        still_time = 0.0
+            processed = preprocess(current, num_points=32, min_distance=2.0)
+            vector = preprocess_to_vector(current, num_points=32, min_distance=2.0)
+
+            if processed is not None:
+                print(f"[preprocess] processed points = {len(processed)}")
+                print(f"[preprocess] feature vector length = {len(vector)}")
+
+
+            current = []
+            still_time = 0.0
 
     pen_down_prev = pen_down
 
