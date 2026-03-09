@@ -33,8 +33,11 @@ module tb_mlp_top;
         #10;
         start = 0;
 
+        $display("Simulation started, waiting for done...");
+
         wait(done == 1);
 
+        $display("Simulation started, waiting for done...");
         $display("DONE. class_id = %0d", class_id);
         #20;
         $finish;
