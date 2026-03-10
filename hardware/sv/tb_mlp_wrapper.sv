@@ -47,4 +47,3 @@ module tb_mlp_wrapper;
 
 endmodule
 
-1
