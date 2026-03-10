@@ -12,6 +12,8 @@ import json
 from flask import Flask, Response
 import threading
 
+import tflite_runtime.interpreter as tflite   # or tensorflow.lite
+
 PYNQ_IP = "192.168.2.99"
 PYNQ_PORT = 5005      # UDP - stroke analysis
 PYNQ_TCP_PORT = 5006  # TCP - TFLite inference
@@ -28,6 +30,415 @@ sock_tcp.connect((PYNQ_IP, PYNQ_TCP_PORT))
 # =========================================================
 # Helpers
 # =========================================================
+
+# stage 1
+PALM_INPUT_SIZE = 192
+
+def preprocess_palm_detector(frame):
+    """
+    Input:  BGR frame from camera e.g. (720, 1280, 3)
+    Output: float32 tensor [1, 192, 192, 3] in RGB [-1, 1]
+            letterbox padding (left, top, right, bottom) normalised to [0,1]
+    """
+    H, W = frame.shape[:2]
+
+    # convert BGR -> RGB
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    # letterbox: pad shorter side to make square, keeping aspect ratio
+    if W > H:
+        pad_top    = (W - H) // 2
+        pad_bottom = W - H - pad_top
+        pad_left   = 0
+        pad_right  = 0
+        sq = W
+    else:
+        pad_left   = (H - W) // 2
+        pad_right  = H - W - pad_left
+        pad_top    = 0
+        pad_bottom = 0
+        sq = H
+
+    padded = cv2.copyMakeBorder(rgb, pad_top, pad_bottom,
+                                     pad_left, pad_right,
+                                     cv2.BORDER_CONSTANT, value=0)
+
+    # resize to 192x192
+    resized = cv2.resize(padded, (PALM_INPUT_SIZE, PALM_INPUT_SIZE),
+                         interpolation=cv2.INTER_LINEAR)
+
+    # normalise to [-1, 1] as float32
+    tensor = (resized.astype(np.float32) / 127.5) - 1.0
+    tensor = np.expand_dims(tensor, axis=0)   # [1, 192, 192, 3]
+
+    # padding fractions (needed later to map detections back to frame coords)
+    pad = (
+        pad_left   / sq,   # left
+        pad_top    / sq,   # top
+        pad_right  / sq,   # right
+        pad_bottom / sq    # bottom
+    )
+
+    return tensor, pad, sq   # sq = side length of padded square in pixels
+
+# stage 2
+
+# ---- anchor generation (exact MediaPipe params) ----
+def generate_anchors():
+    """
+    Produces 2016 anchors matching MediaPipe's SsdAnchorsCalculator.
+    num_layers=4, strides=[8,16,16,16], input=192x192,
+    fixed_anchor_size=True, anchor_offset=0.5
+    """
+    strides      = [8, 16, 16, 16]
+    input_h = input_w = PALM_INPUT_SIZE
+    anchors = []
+
+    for stride in strides:
+        rows = int(np.ceil(input_h / stride))
+        cols = int(np.ceil(input_w / stride))
+        for r in range(rows):
+            for c in range(cols):
+                # two anchors per cell (aspect_ratios=[1.0],
+                # interpolated_scale_aspect_ratio=1.0)
+                for _ in range(2):
+                    cx = (c + 0.5) / cols
+                    cy = (r + 0.5) / rows
+                    anchors.append([cx, cy])
+
+    return np.array(anchors, dtype=np.float32)   # [2016, 2]
+
+ANCHORS = generate_anchors()
+
+# ---- run palm detector ----
+palm_interpreter = tflite.Interpreter(model_path="extracted_models/hand_detector.tflite")
+palm_interpreter.allocate_tensors()
+palm_in  = palm_interpreter.get_input_details()[0]['index']
+palm_out = palm_interpreter.get_output_details()
+# output 0: regressors [1, 2016, 18]
+# output 1: scores     [1, 2016, 1]
+
+lm_interpreter = tflite.Interpreter(model_path="extracted_models/hand_landmarks_detector.tflite")
+lm_interpreter.allocate_tensors()
+lm_in  = lm_interpreter.get_input_details()[0]['index']
+lm_out = lm_interpreter.get_output_details()
+# map output names to indices
+lm_out_map = {d['name']: d['index'] for d in lm_out}
+
+def run_palm_detector(tensor):
+    palm_interpreter.set_tensor(palm_in, tensor)
+    palm_interpreter.invoke()
+    regressors = palm_interpreter.get_tensor(palm_out[0]['index'])[0]  # [2016, 18]
+    scores_raw = palm_interpreter.get_tensor(palm_out[1]['index'])[0, :, 0]  # [2016]
+    return regressors, scores_raw
+
+# ---- decode + NMS ----
+SCORE_THRESH = 0.5
+NMS_THRESH   = 0.3
+X_SCALE = Y_SCALE = W_SCALE = H_SCALE = 192.0
+
+def decode_detections(regressors, scores_raw, pad):
+    """
+    Returns list of dicts, each with:
+        cx, cy, w, h  (normalised to original frame, 0..1)
+        kps           (7 keypoints, each [x, y] normalised to original frame)
+        score
+    """
+    # sigmoid scores
+    scores = 1.0 / (1.0 + np.exp(-scores_raw))
+
+    keep = np.where(scores > SCORE_THRESH)[0]
+    if len(keep) == 0:
+        return []
+
+    kp_scores = scores[keep]
+    kp_regs   = regressors[keep]   # [N, 18]
+    kp_anch   = ANCHORS[keep]      # [N, 2]
+
+    # decode box centre and size (all in [0,1] relative to 192x192 input)
+
+    ANCHORS_WH = np.ones((len(ANCHORS), 2), dtype=np.float32)  # w=1, h=1
+
+    cx = kp_regs[:, 0] / X_SCALE * ANCHORS_WH[keep, 0] + kp_anch[:, 0]
+    cy = kp_regs[:, 1] / Y_SCALE * ANCHORS_WH[keep, 1] + kp_anch[:, 1]
+    w  = kp_regs[:, 2] / W_SCALE * ANCHORS_WH[keep, 0]
+    h  = kp_regs[:, 3] / H_SCALE * ANCHORS_WH[keep, 1]
+    
+    # decode 7 keypoints (indices 4..17, pairs)
+    kps = []
+    for i in range(7):
+        kx = kp_regs[:, 4 + 2*i] / X_SCALE * ANCHORS_WH[keep, 0] + kp_anch[:, 0]
+        ky = kp_regs[:, 4 + 2*i + 1] / Y_SCALE * ANCHORS_WH[keep, 1] + kp_anch[:, 1]
+        kps.append(np.stack([kx, ky], axis=1))
+    kps = np.stack(kps, axis=1)   # [N, 7, 2]
+
+    # NMS using cv2 (expects pixel boxes; multiply by 1000 as int trick)
+    pad_l, pad_t, pad_r, pad_b = pad
+    boxes_nms = []
+    for i in range(len(keep)):
+        x1 = int((cx[i] - w[i]/2) * 1000)
+        y1 = int((cy[i] - h[i]/2) * 1000)
+        bw = int(w[i] * 1000)
+        bh = int(h[i] * 1000)
+        boxes_nms.append([x1, y1, bw, bh])
+
+    indices = cv2.dnn.NMSBoxes(boxes_nms,
+                               kp_scores.tolist(),
+                               0,
+                               NMS_THRESH)
+    if len(indices) == 0:
+        return []
+
+    detections = []
+    for idx in indices.flatten():
+        # map from letterboxed [0,1] back to original frame [0,1]
+        # by removing the padding fraction
+        def unpad_x(v):
+            return (v - pad_l) / (1.0 - pad_l - pad_r)
+        def unpad_y(v):
+            return (v - pad_t) / (1.0 - pad_t - pad_b)
+
+        detections.append({
+            'cx':    unpad_x(float(cx[idx])),
+            'cy':    unpad_y(float(cy[idx])),
+            'w':     float(w[idx])  / (1.0 - pad_l - pad_r),
+            'h':     float(h[idx])  / (1.0 - pad_t - pad_b),
+            'kps':   np.stack([unpad_x(kps[idx,:,0]),
+                               unpad_y(kps[idx,:,1])], axis=1),
+            'score': float(kp_scores[idx])
+        })
+
+    return detections
+
+ROI_SCALE = 2.6   # how much larger than the palm box to make the crop
+
+def compute_roi_affine(detection, frame_W, frame_H):
+    """
+    Replicates MediaPipe's DetectionsToRectsCalculator +
+    RectTransformationCalculator.
+
+    Rotation: aligns wrist (kp 0) -> middle-finger MCP (kp 2) with Y axis.
+    Returns:
+        affine_matrix      (2x3 float32) — maps ROI space -> frame pixels
+        inv_affine_matrix  (2x3 float32) — maps frame pixels -> ROI space
+                           (used later to crop the 224x224 input tensor)
+    """
+    kps = detection['kps']   # [7, 2] in normalised frame coords [0,1]
+
+    # wrist and middle-MCP in pixel coords
+    wrist_x  = kps[0, 0] * frame_W;  wrist_y  = kps[0, 1] * frame_H
+    mcp_x    = kps[2, 0] * frame_W;  mcp_y    = kps[2, 1] * frame_H
+
+    # rotation angle so wrist->MCP aligns with Y axis
+    angle = np.arctan2(mcp_x - wrist_x, mcp_y - wrist_y) - np.pi / 2   # note: x/y order
+
+    # ROI centre = detection box centre in pixels
+    cx = detection['cx'] * frame_W
+    cy = detection['cy'] * frame_H
+
+    # ROI size = max(w,h) * ROI_SCALE in pixels
+    size = max(detection['w'] * frame_W,
+               detection['h'] * frame_H) * ROI_SCALE
+
+    # build affine: rotation + scale + translation
+    cos_a = np.cos(angle)
+    sin_a = np.sin(angle)
+
+    # 3 destination points of the square ROI in frame pixel space
+    # (top-left, top-right, bottom-left) of a size×size square centred at cx,cy
+    half = size / 2.0
+    src_pts = np.float32([
+        [-half, -half],
+        [ half, -half],
+        [-half,  half],
+    ])
+    # rotate each point and translate to centre
+    rot = np.array([[cos_a, -sin_a],
+                    [sin_a,  cos_a]], dtype=np.float32)
+    dst_pts = (rot @ src_pts.T).T + np.array([cx, cy], dtype=np.float32)
+
+    # destination in 224x224 space
+    lm_input = 224.0
+    dst_224 = np.float32([
+        [0,          0       ],
+        [lm_input,   0       ],
+        [0,          lm_input],
+    ])
+
+    # affine: 224 space -> frame pixel space
+    affine_matrix     = cv2.getAffineTransform(dst_224, dst_pts)
+    # inverse: frame pixel space -> 224 space  (used for cropping)
+    inv_affine_matrix = cv2.getAffineTransform(dst_pts, dst_224)
+
+    return affine_matrix, inv_affine_matrix
+
+LM_INPUT_SIZE = 224
+
+def crop_hand_region(frame, inv_affine_matrix):
+    """
+    Applies the inverse affine transform to warp the hand region
+    into a 224x224 image, then normalises to [0, 1] float32 RGB.
+    This is the tensor you send to the PYNQ.
+    """
+    # warpAffine with the inverse matrix maps the rotated/scaled
+    # hand region into the 224x224 output image
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    cropped = cv2.warpAffine(rgb, inv_affine_matrix,
+                             (LM_INPUT_SIZE, LM_INPUT_SIZE),
+                             flags=cv2.INTER_LINEAR,
+                             borderMode=cv2.BORDER_CONSTANT,
+                             borderValue=0)
+
+    # normalise to [0, 1] float32 — landmark model expects this
+    tensor = cropped.astype(np.float32) / 255.0
+    tensor = np.expand_dims(tensor, axis=0)   # [1, 224, 224, 3]
+
+    return tensor
+
+def send_tensor_to_pynq(input_tensor):
+#    """Send [1,224,224,3] float32 tensor, receive 4 output tensors."""
+#    payload = input_tensor.astype(np.float32).tobytes()
+
+#   sock_tcp.sendall(len(payload).to_bytes(4, 'big'))
+#    sock_tcp.sendall(payload)
+
+#    def recv_exact(n):
+#        buf = b''
+#        while len(buf) < n:
+#            chunk = sock_tcp.recv(n - len(buf))
+#            if not chunk:
+#                raise ConnectionError("PYNQ disconnected")
+#            buf += chunk
+#        return buf
+
+#    out_sizes = [63, 1, 1, 63]
+#    outputs = []
+#    for s in out_sizes:
+#        raw = recv_exact(s * 4)
+#        outputs.append(np.frombuffer(raw, dtype=np.float32))
+
+#   return outputs  # [landmarks, presence, handedness, world_landmarks]
+
+        """
+    Temporary: runs the landmark tflite model locally instead of on PYNQ.
+    Drop-in replacement — same inputs and outputs as the real function.
+    """
+    lm_interpreter.set_tensor(lm_in, input_tensor)
+    lm_interpreter.invoke()
+
+    landmarks      = lm_interpreter.get_tensor(lm_out_map['Identity']  )[0]   # [63]
+    presence       = lm_interpreter.get_tensor(lm_out_map['Identity_1'])[0]   # [1]
+    handedness     = lm_interpreter.get_tensor(lm_out_map['Identity_2'])[0]   # [1]
+    world_landmarks = lm_interpreter.get_tensor(lm_out_map['Identity_3'])[0]  # [63]
+
+    return [landmarks, presence, handedness, world_landmarks]
+
+PRESENCE_THRESHOLD = 0.5
+
+def postprocess_landmarks(raw_outputs, affine_matrix, frame_W, frame_H):
+    """
+    raw_outputs: list of 4 arrays returned by send_tensor_to_pynq:
+        [landmarks [63], presence [1], handedness [1], world_landmarks [63]]
+    affine_matrix: 2x3 matrix from compute_roi_affine (ROI space -> frame pixels)
+
+    Returns:
+        landmarks_px   [21, 3]  x,y in frame pixels, z raw
+        landmarks_norm [21, 3]  x,y normalised to [0,1] by frame size
+        presence       float
+        handedness     float    (>0.5 = right hand)
+        world_lms      [21, 3]  metric world coords (origin = hand centre)
+    """
+    presence   = float(raw_outputs[1][0])
+    handedness = float(raw_outputs[2][0])
+
+    if presence < PRESENCE_THRESHOLD:
+        return None
+
+    # reshape [63] -> [21, 3]
+    lms_roi       = raw_outputs[0].reshape(21, 3)   # x,y in [0,224], z raw
+    world_lms     = raw_outputs[3].reshape(21, 3)
+
+    # map x,y from 224x224 ROI space back to frame pixel space
+    # using the affine_matrix (2x3): dst = M * [x, y, 1]^T
+    xy_roi  = lms_roi[:, :2]                          # [21, 2]
+    ones    = np.ones((21, 1), dtype=np.float32)
+    xy_h    = np.hstack([xy_roi, ones])               # [21, 3] homogeneous
+    xy_px   = (affine_matrix @ xy_h.T).T              # [21, 2] frame pixels
+
+    landmarks_px = np.hstack([xy_px,
+                               lms_roi[:, 2:3]])      # [21, 3]
+
+    # normalise x,y to [0,1]
+    landmarks_norm = landmarks_px.copy()
+    landmarks_norm[:, 0] /= frame_W
+    landmarks_norm[:, 1] /= frame_H
+
+    return landmarks_px, landmarks_norm, presence, handedness, world_lms
+
+class _Landmark:
+    """Mimics mediapipe NormalizedLandmark with .x .y .z attributes."""
+    __slots__ = ('x', 'y', 'z')
+    def __init__(self, x, y, z):
+        self.x = x
+        self.y = y
+        self.z = z
+
+class _HandResult:
+    """Mimics the object returned by landmarker.detect_for_video."""
+    def __init__(self):
+        self.hand_landmarks = []   # list of lists of _Landmark (one per hand)
+
+def build_result(all_hand_data):
+    """
+    all_hand_data: list of postprocess_landmarks() return values,
+                   one entry per detected hand (up to 2).
+    Returns a _HandResult whose .hand_landmarks matches what your
+    existing code expects.
+    """
+    result = _HandResult()
+    for hand in all_hand_data:
+        if hand is None:
+            continue
+        landmarks_norm = hand[1]   # [21, 3] normalised
+        lm_list = [_Landmark(float(landmarks_norm[i, 0]),
+                             float(landmarks_norm[i, 1]),
+                             float(landmarks_norm[i, 2]))
+                   for i in range(21)]
+        result.hand_landmarks.append(lm_list)
+    return result
+
+tracked_rois = []   # list of (affine_matrix, inv_affine_matrix) per hand
+
+def update_tracked_roi_from_landmarks(landmarks_px, frame_W, frame_H):
+    """
+    Derive next frame's ROI directly from current landmarks,
+    using wrist (0) and middle-MCP (9) — same as MediaPipe.
+    Returns (affine_matrix, inv_affine_matrix).
+    """
+    wrist = landmarks_px[0, :2]
+    mcp   = landmarks_px[9, :2]
+
+    angle = np.arctan2(mcp[0] - wrist[0], mcp[1] - wrist[1]) - np.pi / 2
+
+    cx = float(np.mean(landmarks_px[:, 0]))
+    cy = float(np.mean(landmarks_px[:, 1]))
+
+    xs = landmarks_px[:, 0];  ys = landmarks_px[:, 1]
+    size = max(np.max(xs) - np.min(xs),
+               np.max(ys) - np.min(ys)) * ROI_SCALE
+
+    cos_a = np.cos(angle);  sin_a = np.sin(angle)
+    half  = size / 2.0
+    src_pts = np.float32([[-half,-half],[half,-half],[-half,half]])
+    rot     = np.array([[cos_a,-sin_a],[sin_a,cos_a]], dtype=np.float32)
+    dst_pts = (rot @ src_pts.T).T + np.array([cx, cy], dtype=np.float32)
+    dst_224 = np.float32([[0,0],[224,0],[0,224]])
+
+    affine     = cv2.getAffineTransform(dst_224, dst_pts)
+    inv_affine = cv2.getAffineTransform(dst_pts, dst_224)
+    return affine, inv_affine
+
 def send_stroke_to_pynq(points): 
     #Send stroke points to the pynq as JSON
 
@@ -257,21 +668,6 @@ VIEW_SCALE_MIN = 0.6
 VIEW_SCALE_MAX = 3.0
 
 # =========================================================
-# MediaPipe
-# =========================================================
-model_path = "apps/capture_client/hand_landmarker.task"
-base_options = python.BaseOptions(model_asset_path=model_path)
-options = vision.HandLandmarkerOptions(
-    base_options=base_options,
-    running_mode=vision.RunningMode.VIDEO,
-    num_hands=2,  # needed for zoom/pan
-    min_hand_detection_confidence=0.5,
-    min_hand_presence_confidence=0.5,
-    min_tracking_confidence=0.5,
-)
-landmarker = vision.HandLandmarker.create_from_options(options)
-
-# =========================================================
 # Camera
 # =========================================================
 def open_camera():
@@ -385,14 +781,37 @@ while True:
 
     # ---- MediaPipe ----
 
-    # improve latency
-
-    small = cv2.resize(frame, (640, 360))
-
-    rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
-    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-    ts_ms = int((t - t0) * 1000)
-    result = landmarker.detect_for_video(mp_image, ts_ms)
+    H, W = frame.shape[:2]
+    
+    # ---- palm detection or use tracked ROIs ----
+    if not tracked_rois:
+        pd_tensor, pad, sq = preprocess_palm_detector(frame)
+        regressors, scores_raw = run_palm_detector(pd_tensor)
+        detections = decode_detections(regressors, scores_raw, pad)
+        tracked_rois = []
+        for det in detections:
+            affine, inv_affine = compute_roi_affine(det, W, H)
+            tracked_rois.append((affine, inv_affine))
+    
+    # ---- landmark inference + postprocessing ----
+    all_hand_data = []
+    new_tracked_rois = []
+    
+    for affine, inv_affine in tracked_rois:
+        lm_tensor = crop_hand_region(frame, inv_affine)
+        raw_outputs = send_tensor_to_pynq(lm_tensor)
+        hand_data = postprocess_landmarks(raw_outputs, affine, W, H)
+    
+        if hand_data is not None:
+            all_hand_data.append(hand_data)
+            new_affine, new_inv_affine = update_tracked_roi_from_landmarks(hand_data[0], W, H)
+            new_tracked_rois.append((new_affine, new_inv_affine))
+        # if hand_data is None, presence was low — drop this ROI
+    
+    tracked_rois = new_tracked_rois
+    
+    # ---- build result object ----
+    result = build_result(all_hand_data)
 
     # defaults
     cursor_screen = None
