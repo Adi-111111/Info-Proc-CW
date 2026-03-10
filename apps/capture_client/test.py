@@ -12,7 +12,8 @@ import json
 from flask import Flask, Response
 import threading
 
-import tflite_runtime.interpreter as tflite   # or tensorflow.lite
+import tensorflow as tf
+tflite = tf.lite   # or tensorflow.lite
 
 PYNQ_IP = "192.168.2.99"
 PYNQ_PORT = 5005      # UDP - stroke analysis
@@ -23,8 +24,8 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 pynq_addr = (PYNQ_IP, PYNQ_PORT)
 
 # TCP socket (TFLite inference)
-sock_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock_tcp.connect((PYNQ_IP, PYNQ_TCP_PORT))
+#sock_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+#sock_tcp.connect((PYNQ_IP, PYNQ_TCP_PORT))
 
 
 # =========================================================
@@ -320,10 +321,10 @@ def send_tensor_to_pynq(input_tensor):
 
 #   return outputs  # [landmarks, presence, handedness, world_landmarks]
 
-        """
-    Temporary: runs the landmark tflite model locally instead of on PYNQ.
-    Drop-in replacement — same inputs and outputs as the real function.
-    """
+
+ #   Temporary: runs the landmark tflite model locally instead of on PYNQ.
+ #   Drop-in replacement — same inputs and outputs as the real function.
+
     lm_interpreter.set_tensor(lm_in, input_tensor)
     lm_interpreter.invoke()
 
