@@ -4,7 +4,7 @@ from pathlib import Path
 from preprocess import preprocess_to_vector
 
 OUT_PATH = Path(__file__).resolve().parents[2] / "hardware" / "sv" / "test_vector.svh"
-SAMPLE_PATH = Path(__file__).resolve().parents[2] / "dataset" / "rectangle" / "rectangle_1772899429330.json"
+SAMPLE_PATH = Path(__file__).resolve().parents[2] / "dataset" / "rectangle" / "circle_1772898452188.json"
 
 
 def sv_signed_literal(value, width):
