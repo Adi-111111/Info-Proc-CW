@@ -12,12 +12,17 @@ import json
 from flask import Flask, Response
 import threading
 
-#PYNQ UDP CONNECTION
 PYNQ_IP = "192.168.2.99"
-PYNQ_PORT = 5005
+PYNQ_PORT = 5005      # UDP - stroke analysis
+PYNQ_TCP_PORT = 5006  # TCP - TFLite inference
 
+# UDP socket (stroke analysis)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 pynq_addr = (PYNQ_IP, PYNQ_PORT)
+
+# TCP socket (TFLite inference)
+sock_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock_tcp.connect((PYNQ_IP, PYNQ_TCP_PORT))
 
 
 # =========================================================
