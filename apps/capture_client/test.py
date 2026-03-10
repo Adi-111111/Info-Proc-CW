@@ -254,7 +254,7 @@ VIEW_SCALE_MAX = 3.0
 # =========================================================
 # MediaPipe
 # =========================================================
-model_path = "capture_client/hand_landmarker.task"
+model_path = "apps/capture_client/hand_landmarker.task"
 base_options = python.BaseOptions(model_asset_path=model_path)
 options = vision.HandLandmarkerOptions(
     base_options=base_options,
