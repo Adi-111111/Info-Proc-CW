@@ -27,8 +27,8 @@ module tb_mlp_wrapper;
         #20;
         rst = 0;
 
-        // Put one known-good test vector here manually later if needed
-        // For now leave zero, then we’ll improve it
+        // Load real test vector into input_bus
+`include "test_vector_wrapper.svh"
 
         #20;
         start = 1;
