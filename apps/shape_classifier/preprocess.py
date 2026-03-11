@@ -36,6 +36,30 @@ def signed_area(points):
     return 0.5 * area
 
 
+def turning_strength(points, i):
+    n = len(points)
+
+    p_prev = points[(i - 1) % n]
+    p = points[i]
+    p_next = points[(i + 1) % n]
+
+    v1 = (p_prev[0] - p[0], p_prev[1] - p[1])
+    v2 = (p_next[0] - p[0], p_next[1] - p[1])
+
+    n1 = math.hypot(v1[0], v1[1])
+    n2 = math.hypot(v2[0], v2[1])
+
+    if n1 < 1e-6 or n2 < 1e-6:
+        return 0.0
+
+    cosang = (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)
+    cosang = max(-1.0, min(1.0, cosang))
+    ang = math.degrees(math.acos(cosang))
+
+    # larger value = sharper corner
+    return 180.0 - ang
+
+
 def canonicalize_closed_stroke(points):
     if not points:
         return points
@@ -46,17 +70,21 @@ def canonicalize_closed_stroke(points):
     if signed_area(pts) < 0:
         pts = pts[::-1]
 
-    # Find canonical start point: smallest y, then smallest x
-    start_idx = min(range(len(pts)), key=lambda i: (pts[i][1], pts[i][0]))
+    strengths = [turning_strength(pts, i) for i in range(len(pts))]
+    best_idx = max(range(len(pts)), key=lambda i: strengths[i])
 
-    # Rotate sequence
-    pts = pts[start_idx:] + pts[:start_idx]
+    # If the shape is smooth/circle-ish, fall back to old stable rule
+    if strengths[best_idx] < 20.0:
+        best_idx = min(range(len(pts)), key=lambda i: (pts[i][1], pts[i][0]))
+
+    pts = pts[best_idx:] + pts[:best_idx]
     return pts
 
 
 def is_closed(points, threshold=0.15):
     if len(points) < 3:
         return False
+
     d = dist(points[0], points[-1])
 
     xs = [p[0] for p in points]
@@ -136,8 +164,7 @@ def normalise_stroke(points):
     if scale < 1e-6:
         scale = 1.0
 
-    norm_points = [((x - cx) / scale, (y - cy) / scale) for x, y in points]
-    return norm_points
+    return [((x - cx) / scale, (y - cy) / scale) for x, y in points]
 
 
 def flatten_points(points):
@@ -149,10 +176,6 @@ def flatten_points(points):
 
 
 def compute_geometry_features(raw_points, norm_points):
-    """
-    Geometry features appended after the 64 coordinate features.
-    These are designed to help the MLP distinguish shapes more robustly.
-    """
     if not raw_points or not norm_points:
         return [0.0] * 6
 
@@ -162,21 +185,13 @@ def compute_geometry_features(raw_points, norm_points):
     raw_h = max(raw_ys) - min(raw_ys)
     raw_scale = max(raw_w, raw_h, 1e-6)
 
-    # 1. closed flag
     closed_flag = 1.0 if is_closed(raw_points) else 0.0
-
-    # 2. normalized start-end distance
     start_end_dist_norm = dist(raw_points[0], raw_points[-1]) / raw_scale
-
-    # 3. aspect ratio (compressed to a bounded range)
-    # 1.0 means square-ish, >1 wide, <1 tall
     aspect_ratio = raw_w / max(raw_h, 1e-6)
 
-    # 4. normalized path length
     path_len = cumulative_lengths(raw_points)[-1] if len(raw_points) > 1 else 0.0
     path_length_norm = path_len / raw_scale
 
-    # 5. radial std from centroid using normalized points
     xs = [p[0] for p in norm_points]
     ys = [p[1] for p in norm_points]
     cx = sum(xs) / len(xs)
@@ -186,7 +201,6 @@ def compute_geometry_features(raw_points, norm_points):
     r_mean = sum(radii) / len(radii)
     radial_std_norm = math.sqrt(sum((r - r_mean) ** 2 for r in radii) / len(radii))
 
-    # 6. normalized signed area from normalized points
     area = signed_area(norm_points)
 
     return [
