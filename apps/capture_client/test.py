@@ -203,38 +203,53 @@ def classify_with_geometry(points):
     ys = [p[1] for p in points]
     scale = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
 
-    # slightly more lenient closure threshold
     closed = dist(points[0], points[-1]) < 0.22 * scale
     if not closed:
         return None
 
-    # IMPORTANT: check polygon classes BEFORE circle
-    rect = try_rectangle(points, eps=0.06 * scale, right_angle_tol=45.0)
-    if rect is not None:
-        return "rectangle"
-
-    tri = try_triangle(points, eps=0.06 * scale)
-    if tri is not None:
-        return "triangle"
-
-    fit = fit_circle_kasa(points)
-    if fit is not None:
-        cx, cy, r, rmse = fit
+    # Circle score
+    circle_fit = fit_circle_kasa(points)
+    circle_rel = None
+    if circle_fit is not None:
+        cx, cy, r, rmse = circle_fit
         if r > 10:
-            rel = rmse / max(1.0, r)
-            if rel < 0.16:
-                return "circle"
+            circle_rel = rmse / max(1.0, r)
+
+    # Strong rectangle only if:
+    # 1) rectangle detector succeeds
+    # 2) shape is NOT too circle-like
+    rect = try_rectangle(points, eps=0.05 * scale, right_angle_tol=35.0)
+    if rect is not None:
+        if circle_rel is None or circle_rel > 0.12:
+            return "rectangle"
+
+    # Strong triangle only if:
+    # 1) triangle detector succeeds
+    # 2) shape is NOT too circle-like
+    tri = try_triangle(points, eps=0.05 * scale)
+    if tri is not None:
+        if circle_rel is None or circle_rel > 0.12:
+            return "triangle"
+
+    # Only call circle if polygon tests did not strongly win
+    if circle_rel is not None and circle_rel < 0.16:
+        return "circle"
 
     return None
 
 
 def final_shape_decision(points, fpga_label):
+    # Never override freehand
+    if fpga_label == "freehand":
+        return "freehand"
+
     geom_label = classify_with_geometry(points)
 
-    # Allow wrong circles to become rectangle/triangle
-    if geom_label in ("triangle", "rectangle"):
+    # Only override circles, and only into strong polygon classes
+    if fpga_label == "circle" and geom_label in ("triangle", "rectangle"):
         return geom_label
 
+    # Otherwise trust FPGA
     return fpga_label
 
 
