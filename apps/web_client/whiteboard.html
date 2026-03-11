@@ -6,6 +6,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
+
 <style>
 
 body{
@@ -90,6 +91,7 @@ body{
 }
 
 </style>
+
 </head>
 
 <body>
@@ -102,7 +104,7 @@ body{
 
   <!-- FLOATING CAMERA WINDOW -->
   <div id="camera-window">
-      <img id="cv-stream" src="http://127.0.0.1:8000/video">
+      <img id="cv-stream" src="http://13.40.61.155:8000/video">
       <div id="camera-label">Interaction Camera</div>
   </div>
 
@@ -142,7 +144,7 @@ socket.on("connect", () => {
   socket.emit("join_board", { board_id: BOARD_ID });
 });
 
-
+// clears the canvas, loops through all existing objects sent by the backend, renders them one by one 
 socket.on("LOAD_BOARD", (data) => {
 
   console.log("Loading board");
@@ -155,7 +157,8 @@ socket.on("LOAD_BOARD", (data) => {
 
 });
 
-
+// reacts to live add/remove events
+// adds new objects or removes existing ones 
 socket.on("board_event", (msg) => {
 
   const { event, payload } = msg;
@@ -170,16 +173,15 @@ socket.on("board_event", (msg) => {
 
 });
 
-
+//logging for debugging 
 socket.on("board_event", msg => {
   console.log("BOARD EVENT:", msg);
 });
 
 
-// ========================
 // RENDERING
-// ========================
-
+// converts incoming object data into Fabric.js shapes
+// supports polylines, rectangles, circles 
 function renderObject(obj){
 
   console.log("OBJECT RECEIVED:", obj);

@@ -11,26 +11,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create Socket.IO server
+
 sio = socketio.AsyncServer(
     cors_allowed_origins='*',
     logger=True,
     engineio_logger=True
 )
-app = web.Application()
-sio.attach(app)
+app = web.Application() #create web server
+sio.attach(app) #attach websockets to the server to allow continuous information exchange between server and client 
 
-boards = {}
+#in memory board state
+boards = {} #dictionary storing board contents
 DEFAULT_BOARD = "board1"
 boards[DEFAULT_BOARD] = {}
 
-connected_clients = set()
+connected_clients = set() #tracks connected sockets
 last_event_time = {}
 
-# =========================
-# CLIENT CONNECT
-# =========================
 
+
+#Client Lifecycle Events
 @sio.event
 async def connect(sid, environ):
     connected_clients.add(sid)
@@ -41,13 +41,10 @@ async def disconnect(sid):
     connected_clients.discard(sid)
     logger.info(f"Client disconnected: {sid}")
 
-# =========================
-# JOIN BOARD
-# =========================
 
+#Join Board
 @sio.event
 async def join_board(sid, data):
-
     board_id = data["board_id"]
 
     if board_id not in boards:
@@ -55,110 +52,113 @@ async def join_board(sid, data):
 
     await sio.save_session(sid, {"board_id": board_id})
 
-    # 🔴 THIS WAS MISSING
     await sio.enter_room(sid, board_id)
 
     logger.info(f"{sid} joined {board_id}")
 
-    await sio.emit("LOAD_BOARD", boards[board_id], to=sid)
+    #sends the full current board state back to that client with LOAD_BOARD
+    await sio.emit("LOAD_BOARD", boards[board_id], to=sid) 
 
-# =========================
-# NORMAL BOARD EVENTS
-# =========================
 
+
+
+#Board Event - Handles normal whiteboard updates from the frontend
+#Expects a message with an event and payload
+#Defined asynchronously 
 @sio.event
 async def board_event(sid, message):
 
+    #checks the time of the most recent event sent from this client - if too soon then return otherwise set the last_event_time as now. (rate_limiting)
     now = time.time()
     if sid in last_event_time and now - last_event_time[sid] < 0.02:
         return
-    last_event_time[sid] = now
+    last_event_time[sid] = now 
 
     try:
-
-        session = await sio.get_session(sid)
-        board_id = session.get("board_id")
+        session = await sio.get_session(sid) #get the stored session information for the client indentified by this sid 
+        board_id = session.get("board_id") #get the board to apply the event to? currently hardcoded, how do we change this?
 
         event = message["event"]
         payload = message["payload"]
 
+        #Stores the object in the board directory
         if event == "ADD_OBJECT":
             boards[board_id][payload["object_id"]] = payload
 
+        #Removes the object by object_id
         elif event == "REMOVE_OBJECT":
             boards[board_id].pop(payload["object_id"], None)
 
-        # 🔴 BROADCAST ONLY TO BOARD ROOM
-        await sio.emit(
-            "board_event",
-            message,
-            room=board_id
-        )
+        #Broadcast event to everyone in the board room
+        await sio.emit("board_event", message, room=board_id)
 
     except Exception:
         logger.exception("Error handling board_event")
 
-# =========================
-# SHAPE EVENT (FROM PYNQ)
-# =========================
 
-@sio.event
-async def shape_event(sid, data):
 
-    now = time.time()
-    if sid in last_event_time and now - last_event_time[sid] < 0.02:
-        return
-    last_event_time[sid] = now
 
-    try:
+# #Shape Event - Handles shapes coming from PYNQ bridge
+# #Expects data with id, type and params 
+# #Supports polyline and rectangle
+# #Converts it into the same board object format and broadcasts it as an ADD_OBJECT
+# @sio.event
+# async def shape_event(sid, data):
 
-        obj_id = data.get("id")
-        obj_type = data.get("type")
-        params = data.get("params", {})
+#     now = time.time()
+#     if sid in last_event_time and now - last_event_time[sid] < 0.02:
+#         return
+#     last_event_time[sid] = now
 
-        if not obj_id or not obj_type:
-            logger.warning("Invalid shape_event")
-            return
+#     try:
 
-        session = await sio.get_session(sid)
-        board_id = session.get("board_id")
+#         obj_id = data.get("id")
+#         obj_type = data.get("type")
+#         params = data.get("params", {})
 
-        payload = {
-            "object_id": obj_id,
-            "type": obj_type
-        }
+#         if not obj_id or not obj_type:
+#             logger.warning("Invalid shape_event")
+#             return
 
-        if obj_type == "polyline":
-            payload["points"] = params.get("points", [])
+#         session = await sio.get_session(sid)
+#         board_id = session.get("board_id")
 
-        elif obj_type == "rectangle":
-            payload["corners"] = params.get("corners", [])
+#         payload = {
+#             "object_id": obj_id,
+#             "type": obj_type
+#         }
 
-        else:
-            logger.warning(f"Unknown shape type: {obj_type}")
-            return
+#         if obj_type == "polyline":
+#             payload["points"] = params.get("points", [])
 
-        boards[board_id][obj_id] = payload
+#         elif obj_type == "rectangle":
+#             payload["corners"] = params.get("corners", [])
 
-        message = {
-            "event": "ADD_OBJECT",
-            "payload": payload
-        }
+#         else:
+#             logger.warning(f"Unknown shape type: {obj_type}")
+#             return
 
-        # 🔴 BROADCAST TO BOARD ROOM
-        await sio.emit(
-            "board_event",
-            message,
-            room=board_id
-        )
+#         boards[board_id][obj_id] = payload
 
-        logger.info(f"shape_event → broadcast {obj_type}")
+#         message = {
+#             "event": "ADD_OBJECT",
+#             "payload": payload
+#         }
 
-    except Exception:
-        logger.exception("Error handling shape_event")
+#         #Broadcast Board Event to Room
+#         await sio.emit(
+#             "board_event",
+#             message,
+#             room=board_id
+#         )
 
-# =========================
-# RUN SERVER
-# =========================
+#         logger.info(f"shape_event → broadcast {obj_type}")
 
+#     except Exception:
+#         logger.exception("Error handling shape_event")
+
+
+
+
+# Run Server
 web.run_app(app, port=5000)
