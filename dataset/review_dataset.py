@@ -6,7 +6,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 # Change this to whichever class you want to review
-CLASS_NAME = "rectangle"
+CLASS_NAME = "triangle"
 
 files = sorted(glob.glob(f"dataset/{CLASS_NAME}/*.json"))
 
