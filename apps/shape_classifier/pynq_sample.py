@@ -2,7 +2,7 @@ import json
 from preprocess import preprocess_to_vector
 
 # load raw stroke JSON
-with open("dataset/triangle/triangle_1772899858701.json", "r") as f:
+with open("dataset/circle/circle_1772893918629.json", "r") as f:
     data = json.load(f)
 
 stroke = data["stroke"]
