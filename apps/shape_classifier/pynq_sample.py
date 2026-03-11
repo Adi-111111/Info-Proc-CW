@@ -2,7 +2,7 @@ import json
 from preprocess import preprocess_to_vector
 
 # load raw stroke JSON
-with open("dataset/circle/circle_1772893918629.json", "r") as f:
+with open("dataset/rectangle/circle_1772898438729.json", "r") as f:
     data = json.load(f)
 
 stroke = data["stroke"]
@@ -17,10 +17,10 @@ out = {
     "features": features
 }
 
-with open("triangle_features.json", "w") as f:
+with open("rectangle_features.json", "w") as f:
     json.dump(out, f)
 
 print(len(features))
 print(features[:10])
 
-print("Saved to triangle_features.json")
+print("Saved to rectangle_features.json")

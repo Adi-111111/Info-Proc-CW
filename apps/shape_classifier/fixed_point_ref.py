@@ -5,7 +5,7 @@ from preprocess import preprocess_to_vector
 
 EXPORT_PATH = Path(__file__).resolve().parent / "weights_export" / "mlp_quantized.json"
 
-sample_file = Path(__file__).resolve().parents[2] / "dataset" / "circle" / "circle_1772893918629.json"
+sample_file = Path(__file__).resolve().parents[2] / "dataset" / "rectangle" / "circle_1772898438729.json"
 
 with open(sample_file, "r") as f:
     data = json.load(f)
