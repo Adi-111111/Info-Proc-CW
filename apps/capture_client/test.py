@@ -13,7 +13,7 @@ from flask import Flask, Response
 import threading
 
 import tensorflow as tf
-tflite = tf.lite   # or tensorflow.lite
+tflite = tf.lite   # or tensorflow.lite  
 
 PYNQ_IP = "192.168.2.99"
 PYNQ_PORT = 5005      # UDP - stroke analysis
