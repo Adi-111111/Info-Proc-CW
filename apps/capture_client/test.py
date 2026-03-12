@@ -84,13 +84,13 @@ def generate_anchors():
 ANCHORS = generate_anchors()
 
 palm_interpreter = tflite.Interpreter(
-    model_path="extracted_models/hand_detector.tflite")
+    model_path="extracted_models/hand_detector.tflite", num_threads=4)
 palm_interpreter.allocate_tensors()
 palm_in  = palm_interpreter.get_input_details()[0]['index']
 palm_out = palm_interpreter.get_output_details()
 
 lm_interpreter = tflite.Interpreter(
-    model_path="extracted_models/hand_landmarks_detector.tflite")
+    model_path="extracted_models/hand_landmarks_detector.tflite", num_threads=4)
 lm_interpreter.allocate_tensors()
 lm_in  = lm_interpreter.get_input_details()[0]['index']
 lm_out = lm_interpreter.get_output_details()
@@ -504,6 +504,7 @@ VIEW_SCALE_MAX       = 3.0
 # =========================================================
 # Camera
 # =========================================================
+
 def open_camera():
     for idx in range(2):
         cap = cv2.VideoCapture(idx)
@@ -522,6 +523,33 @@ if cap is None:
     raise SystemExit(1)
 print("Using camera index:", cam_idx)
 
+# threaded camera reader — always has the latest frame ready
+class CameraReader:
+    def __init__(self, cap):
+        self.cap   = cap
+        self.frame = None
+        self.lock  = threading.Lock()
+        self.t     = threading.Thread(target=self._reader, daemon=True)
+        self.t.start()
+
+    def _reader(self):
+        while True:
+            ok, frame = self.cap.read()
+            if ok and frame is not None:
+                with self.lock:
+                    self.frame = frame
+
+    def read(self):
+        with self.lock:
+            if self.frame is None:
+                return False, None
+            return True, self.frame.copy()
+
+    def release(self):
+        self.cap.release()
+
+cam = CameraReader(cap)
+
 
 # =========================================================
 # Flask
@@ -530,12 +558,17 @@ app = Flask(__name__)
 latest_frame = None
 
 def generate_frames():
+    global perf
     global latest_frame
     while True:
         if latest_frame is None:
             time.sleep(0.01)
             continue
+        t0 = time.time()
         ret, buffer = cv2.imencode('.jpg', latest_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        dt = (time.time() - t0) * 1000
+
+        perf["jpeg"] = perf_smooth * perf["jpeg"] + (1-perf_smooth) * dt
         frame = buffer.tobytes()
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
@@ -574,14 +607,36 @@ twohand_prev_mid  = None
 twohand_prev_dist = None
 t0 = time.time()
 
+PALM_DETECT_EVERY = 10
+frame_counter = 0
+palm_running_this_frame = False
+
+perf = {
+    "palm": 0.0,
+    "landmark": 0.0,
+    "roi": 0.0,
+    "render": 0.0,
+    "jpeg": 0.0,
+    "wait": 0.0,
+    "cam": 0.0,
+    "total": 0.0
+}
+
+perf_smooth = 0.9
+
 
 # =========================================================
 # Main loop
 # =========================================================
 while True:
-    ok, frame = cap.read()
+    frame_start = time.time()
+    frame_counter += 1
+    # 2. also time the camera read — it can block waiting for the next frame:
+    t_cam = time.time()
+    ok, frame = cam.read()
+    perf["cam"] = perf_smooth * perf["cam"] + (1-perf_smooth) * (time.time() - t_cam) * 1000
     if not ok or frame is None:
-        time.sleep(0.05)
+        time.sleep(0.001)
         continue
 
     frame = np.ascontiguousarray(frame)
@@ -603,24 +658,44 @@ while True:
 # through to "---- build result object ----" with this:
 
     # ---- palm detection when we don't have enough hands ----
-    if len(tracked_rois) < MAX_HANDS:
-        for i in range(len(tracked_rois), MAX_HANDS):
-            smoothers[i].reset()
+
+# replace the palm running block with this:
+    palm_running_this_frame = (
+        frame_counter % PALM_DETECT_EVERY == 0
+        or len(tracked_rois) == 0
+    )
+
+    perf_palm_this_frame = 0.0
+    if palm_running_this_frame:
+        t_palm_start = time.time()
         pd_tensor, pad, sq = preprocess_palm_detector(frame)
         regressors, scores_raw = run_palm_detector(pd_tensor)
         detections = decode_detections(regressors, scores_raw, pad)
-        tracked_rois = []
-        for i, det in enumerate(detections):
-            affine, inv_affine = compute_roi_affine(det, W, H)
-            tracked_rois.append((affine, inv_affine, i))
+
+        if len(detections) != len(tracked_rois):
+            tracked_rois = []
+            for i, det in enumerate(detections):
+                affine, inv_affine = compute_roi_affine(det, W, H)
+                tracked_rois.append((affine, inv_affine, i))
+            for i in range(len(tracked_rois), MAX_HANDS):
+                smoothers[i].reset()
+
+        perf_palm_this_frame = (time.time() - t_palm_start) * 1000
+        perf["palm"] = perf_smooth * perf["palm"] + (1-perf_smooth) * perf_palm_this_frame
 
     # ---- landmark inference + postprocessing ----
     all_hand_data    = []
     new_tracked_rois = []
 
     for affine, inv_affine, hand_idx in tracked_rois:
-        lm_tensor   = crop_hand_region(frame, inv_affine)
+        t0 = time.time()
+        lm_tensor = crop_hand_region(frame, inv_affine)
+        dt = (time.time() - t0) * 1000
+        perf["roi"] = perf_smooth * perf["roi"] + (1-perf_smooth) * dt
+        t0 = time.time()
         raw_outputs = send_tensor_to_pynq(lm_tensor)
+        dt = (time.time() - t0) * 1000
+        perf["landmark"] = perf_smooth * perf["landmark"] + (1-perf_smooth) * dt
         hand_data   = postprocess_landmarks(raw_outputs, affine, W, H)
 
         if hand_data is not None:
@@ -818,8 +893,13 @@ while True:
 
     M = np.array([[view_scale, 0, view_ox],
                   [0, view_scale, view_oy]], dtype=np.float32)
+    t0 = time.time()
+
     warped_canvas = cv2.warpAffine(canvas, M, (W, H),
-                                   flags=cv2.INTER_NEAREST, borderValue=(0, 0, 0))
+                                flags=cv2.INTER_NEAREST, borderValue=(0, 0, 0))
+
+    dt = (time.time() - t0) * 1000
+    perf["render"] = perf_smooth * perf["render"] + (1-perf_smooth) * dt
 
     mask = warped_canvas[:, :, 0] > 0
     display[mask] = warped_canvas[mask]
@@ -860,10 +940,34 @@ while True:
     cv2.putText(display,
                 f"PYNQ -> {PYNQ_IP}:{PYNQ_PORT}",
                 (20, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+    
+    raw_total = (time.time() - frame_start) * 1000
+    perf["total"] = perf_smooth * perf["total"] + (1-perf_smooth) * raw_total
+
+    cv2.putText(display,
+            f"lat {perf['total']:.1f} ms  ({1000/perf['total']:.1f} FPS)",
+            (20, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+
+    
+    palm_colour = (0, 0, 255) if palm_running_this_frame else (100, 100, 100)
+
+# replace the two perf putText lines at the bottom with this:
+    palm_colour = (0, 0, 255) if palm_running_this_frame else (100, 100, 100)
+    palm_str = f"palm {'RUN' if palm_running_this_frame else 'skip'} {perf_palm_this_frame:.1f}ms (avg {perf['palm']:.1f}ms)"
+    cv2.putText(display, palm_str,
+                (20, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.6, palm_colour, 2)
+
+    cv2.putText(display,
+                f"cam {perf['cam']:.1f}ms| wait {perf['wait']:.1f}ms |roi {perf['roi']:.1f}ms | lm {perf['landmark']:.1f}ms | render {perf['render']:.1f}ms | jpeg {perf['jpeg']:.1f}ms",
+                (20, 225), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
 
     latest_frame = display
 
-    k = cv2.waitKey(1) & 0xFF
+    t_wait = time.time()
+    k = -1
+    time.sleep(0.0005)
+    perf["wait"] = perf_smooth * perf["wait"] + (1-perf_smooth) * (time.time() - t_wait) * 1000
+
     if k == 27:
         break
 
@@ -890,5 +994,5 @@ while True:
     if k in (ord('s'), ord('S')):
         GRID_SNAP = not GRID_SNAP
 
-cap.release()
+cam.release()
 cv2.destroyAllWindows()
