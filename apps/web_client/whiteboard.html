@@ -71,6 +71,48 @@ body{
   object-fit:cover;
 }
 
+/* UNDO BUTTON */
+
+#undo-btn{
+  position:absolute;
+  top:16px;
+  left:16px;
+  z-index:10;
+  padding:8px 18px;
+  font-size:14px;
+  font-family:Arial, sans-serif;
+  background:#222;
+  color:white;
+  border:none;
+  border-radius:6px;
+  cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,0,0,0.25);
+}
+
+#undo-btn:hover{
+  background:#444;
+}
+
+#redo-btn{
+  position:absolute;
+  top:16px;
+  left:100px;
+  z-index:10;
+  padding:8px 18px;
+  font-size:14px;
+  font-family:Arial, sans-serif;
+  background:#222;
+  color:white;
+  border:none;
+  border-radius:6px;
+  cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,0,0,0.25);
+}
+
+#redo-btn:hover{
+  background:#444;
+}
+
 /* small label */
 
 #camera-label{
@@ -101,6 +143,10 @@ body{
 
   <!-- WHITEBOARD (main UI) -->
   <canvas id="board"></canvas>
+
+  <!-- UNDO / REDO BUTTONS -->
+  <button id="undo-btn">&#8592; Undo</button>
+  <button id="redo-btn">Redo &#8594;</button>
 
   <!-- FLOATING CAMERA WINDOW -->
   <div id="camera-window">
@@ -157,15 +203,15 @@ socket.on("LOAD_BOARD", (data) => {
 
 });
 
-// reacts to live add/remove events
-// adds new objects or removes existing ones 
+// shapes arriving from PYNQ / simulator
+socket.on("whiteboard_event", (shape) => {
+  renderObject(shape);
+});
+
+// undo removals (and any other board control events)
 socket.on("board_event", (msg) => {
 
   const { event, payload } = msg;
-
-  if (event === "ADD_OBJECT"){
-    renderObject(payload);
-  }
 
   if (event === "REMOVE_OBJECT"){
     removeObject(payload.object_id);
@@ -173,9 +219,9 @@ socket.on("board_event", (msg) => {
 
 });
 
-//logging for debugging 
-socket.on("board_event", msg => {
-  console.log("BOARD EVENT:", msg);
+//logging for debugging
+socket.on("whiteboard_event", shape => {
+  console.log("WHITEBOARD EVENT:", shape);
 });
 
 
@@ -336,6 +382,19 @@ function pointsToPath(points){
   return path;
 
 }
+
+
+// ========================
+// UNDO BUTTON
+// ========================
+
+document.getElementById("undo-btn").addEventListener("click", () => {
+  socket.emit("undo_last", { board_id: BOARD_ID });
+});
+
+document.getElementById("redo-btn").addEventListener("click", () => {
+  socket.emit("redo_last", { board_id: BOARD_ID });
+});
 
 
 // ========================
