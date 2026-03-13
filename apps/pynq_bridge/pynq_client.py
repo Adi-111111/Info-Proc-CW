@@ -8,7 +8,7 @@ and forwards it to the whiteboard server
 import socket
 import json
 import socketio
-import random
+import uuid
 
 # CONFIG
 SERVER_URL = "http://13.40.61.155:5000"
@@ -22,12 +22,8 @@ BUFFER_SIZE = 65535
 sio = socketio.Client(logger=True, engineio_logger=True)
 @sio.event
 def connect():
-    print("\n[SERVER] Connected to whiteboard server")
-    sio.emit("join_board", {
-        "board_id": BOARD_ID
-    })
-    print("[SERVER] Joined board:", BOARD_ID)
-
+    sio.emit("register_pynq")
+    print("[SERVER Connected to server")
 
 @sio.event
 def disconnect():
@@ -80,20 +76,13 @@ if __name__ == "__main__":
 
             # Add object_id if missing
             if "object_id" not in shape:
-                shape["object_id"] = "obj_" + str(random.randint(1000, 9999))
+                shape["object_id"] = f"obj_{uuid.uuid4().hex[:8]}" 
                 print("[CLIENT] Generated object_id:", shape["object_id"])
 
-
-            # Send to whiteboard server
-            message = {
-                "event": "ADD_OBJECT",
-                "payload": shape
-            }
-
             print("\n[CLIENT] Sending to server:")
-            print(json.dumps(message, indent=2)) #Python Object -> JSON string
+            print(json.dumps(shape, indent=2)) #Python Object -> JSON string
 
-            sio.emit("board_event", message)
+            sio.emit("pynq_event", shape)
 
             print("[CLIENT] Shape forwarded successfully")
 
