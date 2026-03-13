@@ -1,141 +1,75 @@
 import cv2
 import numpy as np
 import time
-
+import json
+import socket
+from pathlib import Path
+import sys
+import os
+from pathlib import Path
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
+from datetime import datetime
+# =========================================================
+# Import preprocessing
+# =========================================================
+sys.path.append(str(Path(__file__).resolve().parents[1] / "shape_classifier"))
+from preprocess import preprocess_to_vector
 
-import socket 
-import json
-
-from flask import Flask, Response
-import threading
-
-#PYNQ UDP CONNECTION
+# =========================================================
+# CONFIG
+# =========================================================
 PYNQ_IP = "192.168.2.99"
 PYNQ_PORT = 5005
+REPLY_PORT = 5006
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+# Change if needed
+LAPTOP_REPLY_IP = "192.168.2.1"
+
+CLASS_NAMES = ["circle", "rectangle", "triangle", "line", "freehand"]
+
+COORD_SCALE = 127
+GEOM_SCALE = 32
+
+PINCH_THRESH_PX = 80
+SMOOTH_ALPHA = 0.25
+MIN_POINTS = 5
+
+# =========================================================
+# UDP
+# =========================================================
+send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 pynq_addr = (PYNQ_IP, PYNQ_PORT)
 
+recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+recv_sock.bind(("0.0.0.0", REPLY_PORT))
+recv_sock.setblocking(False)
 
 # =========================================================
-# Helpers
+# HELPERS
 # =========================================================
-def send_stroke_to_pynq(points): 
-    #Send stroke points to the pynq as JSON
+def save_stroke_locally(points, label="test", root="holdout_test"):
+    root = Path(root)
+    folder = root / label
+    folder.mkdir(parents=True, exist_ok=True)
 
-    data = { 
+    timestamp = int(time.time() * 1000)
+    filename = folder / f"{label}_{timestamp}.json"
+
+    data = {
         "stroke": [[int(p[0]), int(p[1])] for p in points]
     }
 
-    payload = json.dumps(data).encode("utf-8")
+    with open(filename, "w") as f:
+        json.dump(data, f, indent=2)
 
-    sock.sendto(payload, pynq_addr)
+    print(f"[save] saved {filename}")
 
-    print(f"[udp] sent stroke with {len(points)} points to PYNQ")
 
 def dist(a, b):
     return float(np.hypot(a[0] - b[0], a[1] - b[1]))
 
-def point_line_distance(p, a, b):
-    ax, ay = a
-    bx, by = b
-    px, py = p
-    vx, vy = bx - ax, by - ay
-    wx, wy = px - ax, py - ay
-    denom = vx * vx + vy * vy
-    if denom < 1e-6:
-        return dist(p, a)
-    return abs(vx * wy - vy * wx) / np.sqrt(denom)
-
-def snap_angle_endpoint(a, b, angle_step_deg=45):
-    """Snap line AB to nearest multiple of angle_step_deg, preserving length."""
-    ax, ay = a
-    bx, by = b
-    dx, dy = bx - ax, by - ay
-    length = np.hypot(dx, dy)
-    if length < 1e-6:
-        return a, b
-    ang = np.degrees(np.arctan2(dy, dx))
-    snapped = round(ang / angle_step_deg) * angle_step_deg
-    rad = np.radians(snapped)
-    bx2 = int(round(ax + length * np.cos(rad)))
-    by2 = int(round(ay + length * np.sin(rad)))
-    return a, (bx2, by2)
-
-def resample_polyline(points, step=8.0):
-    """Resample stroke so consecutive points are ~step pixels apart."""
-    if len(points) < 2:
-        return points[:]
-    out = [points[0]]
-    acc = 0.0
-    prev = np.array(points[0], dtype=float)
-    for p in points[1:]:
-        cur = np.array(p, dtype=float)
-        seg = np.linalg.norm(cur - prev)
-        if seg < 1e-6:
-            continue
-        while acc + seg >= step:
-            t = (step - acc) / seg
-            newp = prev + t * (cur - prev)
-            out.append((int(round(newp[0])), int(round(newp[1]))))
-            prev = newp
-            seg = np.linalg.norm(cur - prev)
-            acc = 0.0
-        acc += seg
-        prev = cur
-    if out[-1] != points[-1]:
-        out.append(points[-1])
-    return out
-
-def rdp(points, eps):
-    """Ramer–Douglas–Peucker polyline simplification."""
-    if len(points) < 3:
-        return points
-    a = np.array(points[0], dtype=float)
-    b = np.array(points[-1], dtype=float)
-    ab = b - a
-    ab2 = float(ab @ ab)
-
-    max_d = -1.0
-    idx = -1
-    for i in range(1, len(points) - 1):
-        p = np.array(points[i], dtype=float)
-        if ab2 < 1e-9:
-            d = np.linalg.norm(p - a)
-        else:
-            t = float(((p - a) @ ab) / ab2)
-            proj = a + np.clip(t, 0.0, 1.0) * ab
-            d = np.linalg.norm(p - proj)
-        if d > max_d:
-            max_d = d
-            idx = i
-
-    if max_d > eps:
-        left = rdp(points[: idx + 1], eps)
-        right = rdp(points[idx:], eps)
-        return left[:-1] + right
-    return [points[0], points[-1]]
-
-def fit_circle_kasa(points):
-    """Return (cx, cy, r, rmse)."""
-    pts = np.array(points, dtype=float)
-    x = pts[:, 0]
-    y = pts[:, 1]
-    A = np.column_stack([x, y, np.ones_like(x)])
-    b = x * x + y * y
-    try:
-        c, *_ = np.linalg.lstsq(A, b, rcond=None)
-    except np.linalg.LinAlgError:
-        return None
-    cx = 0.5 * c[0]
-    cy = 0.5 * c[1]
-    r = np.sqrt(max(1e-9, cx * cx + cy * cy + c[2]))
-    d = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
-    rmse = float(np.sqrt(np.mean((d - r) ** 2)))
-    return float(cx), float(cy), float(r), rmse
 
 def angle_deg(u, v):
     u = np.array(u, dtype=float)
@@ -147,14 +81,69 @@ def angle_deg(u, v):
     c = float(np.clip((u @ v) / (nu * nv), -1.0, 1.0))
     return float(np.degrees(np.arccos(c)))
 
-def try_rectangle(points, eps=12.0, right_angle_tol=50.0):
-    """
-    Lenient rectangle detector:
-    - RDP simplify
-    - Drop shortest edges until 4 corners remain
-    - Check approx right angles
-    """
+
+def rdp(points, eps):
+    if len(points) < 3:
+        return points[:]
+
+    a = np.array(points[0], dtype=float)
+    b = np.array(points[-1], dtype=float)
+    ab = b - a
+    ab2 = float(ab @ ab)
+
+    max_d = -1.0
+    idx = -1
+
+    for i in range(1, len(points) - 1):
+        p = np.array(points[i], dtype=float)
+        if ab2 < 1e-9:
+            d = np.linalg.norm(p - a)
+        else:
+            t = float(((p - a) @ ab) / ab2)
+            proj = a + np.clip(t, 0.0, 1.0) * ab
+            d = np.linalg.norm(p - proj)
+
+        if d > max_d:
+            max_d = d
+            idx = i
+
+    if max_d > eps:
+        left = rdp(points[: idx + 1], eps)
+        right = rdp(points[idx:], eps)
+        return left[:-1] + right
+
+    return [points[0], points[-1]]
+
+
+def fit_circle_kasa(points):
+    pts = np.array(points, dtype=float)
+    if len(pts) < 5:
+        return None
+
+    x = pts[:, 0]
+    y = pts[:, 1]
+
+    A = np.column_stack([x, y, np.ones_like(x)])
+    b = x * x + y * y
+
+    try:
+        c, *_ = np.linalg.lstsq(A, b, rcond=None)
+    except np.linalg.LinAlgError:
+        return None
+
+    cx = 0.5 * c[0]
+    cy = 0.5 * c[1]
+    r = np.sqrt(max(1e-9, cx * cx + cy * cy + c[2]))
+
+    d = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+    rmse = float(np.sqrt(np.mean((d - r) ** 2)))
+
+    return float(cx), float(cy), float(r), rmse
+
+
+def try_rectangle(points, eps=12.0, right_angle_tol=45.0):
     simp = rdp(points, eps)
+
     if len(simp) >= 2 and simp[0] == simp[-1]:
         simp = simp[:-1]
 
@@ -180,86 +169,301 @@ def try_rectangle(points, eps=12.0, right_angle_tol=50.0):
 
     return simp
 
-def draw_circle(canvas, cx, cy, r, thickness=3, fill=False):
+
+def try_triangle(points, eps=12.0):
+    simp = rdp(points, eps)
+
+    if len(simp) >= 2 and simp[0] == simp[-1]:
+        simp = simp[:-1]
+
+    while len(simp) > 3:
+        n = len(simp)
+        lens = []
+        for i in range(n):
+            a = np.array(simp[i], float)
+            b = np.array(simp[(i + 1) % n], float)
+            lens.append(np.linalg.norm(b - a))
+        simp.pop(int(np.argmin(lens)))
+
+    if len(simp) != 3:
+        return None
+
+    a, b, c = [np.array(p, dtype=float) for p in simp]
+    area = abs(np.cross(b - a, c - a)) * 0.5
+    if area < 200:
+        return None
+
+    return simp
+
+
+def classify_with_geometry(points):
+    if len(points) < 10:
+        return None
+
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    scale = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
+
+    closed = dist(points[0], points[-1]) < 0.22 * scale
+    if not closed:
+        return None
+
+    circle_fit = fit_circle_kasa(points)
+    circle_rel = None
+    if circle_fit is not None:
+        cx, cy, r, rmse = circle_fit
+        if r > 10:
+            circle_rel = rmse / max(1.0, r)
+
+    rect = try_rectangle(points, eps=0.05 * scale, right_angle_tol=35.0)
+    if rect is not None:
+        if circle_rel is None or circle_rel > 0.12:
+            return "rectangle"
+
+    tri = try_triangle(points, eps=0.05 * scale)
+    if tri is not None:
+        if circle_rel is None or circle_rel > 0.12:
+            return "triangle"
+
+    if circle_rel is not None and circle_rel < 0.16:
+        return "circle"
+
+    return None
+
+
+def final_shape_decision(points, fpga_label):
+    if fpga_label == "freehand":
+        return "freehand"
+
+    geom_label = classify_with_geometry(points)
+
+    if fpga_label == "circle" and geom_label in ("triangle", "rectangle"):
+        return geom_label
+
+    return fpga_label
+
+
+def quantize_features(features):
+    f = np.array(features, dtype=float)
+    f[:64] = np.round(f[:64] * COORD_SCALE)
+    f[64:] = np.round(f[64:] * GEOM_SCALE)
+    f = np.clip(f, -128, 127).astype(np.int8)
+    return f.tolist()
+
+
+def send_features_to_pynq(points):
+    vector = preprocess_to_vector(points, num_points=32, min_distance=2.0)
+
+    if vector is None:
+        print("[preprocess] failed")
+        return None
+
+    if len(vector) != 70:
+        print(f"[preprocess] expected 70 features, got {len(vector)}")
+        return None
+
+    q = quantize_features(vector)
+
+    payload = {
+        "features": q,
+        "reply_ip": LAPTOP_REPLY_IP,
+        "reply_port": REPLY_PORT
+    }
+
+    send_sock.sendto(json.dumps(payload).encode("utf-8"), pynq_addr)
+
+    print("[udp] sent features to PYNQ")
+    print("[preprocess] first 10 raw features:", vector[:10])
+    print("[preprocess] first 10 quantized features:", q[:10])
+
+    return q
+
+
+def poll_pynq_reply():
+    try:
+        data, addr = recv_sock.recvfrom(65535)
+    except BlockingIOError:
+        return None
+
+    try:
+        payload = json.loads(data.decode("utf-8"))
+        print(f"[udp] got reply from {addr}: {payload}")
+        return payload
+    except Exception as e:
+        print("[udp] bad reply:", e)
+        return None
+
+
+# =========================================================
+# RENDER HELPERS
+# =========================================================
+def draw_polyline(canvas, points, thickness=3):
+    for i in range(1, len(points)):
+        cv2.line(
+            canvas,
+            tuple(map(int, points[i - 1])),
+            tuple(map(int, points[i])),
+            (255, 255, 255),
+            thickness
+        )
+
+
+def draw_clean_line(canvas, points, thickness=3):
+    if len(points) < 2:
+        return
+    a = points[0]
+    b = points[-1]
+    cv2.line(canvas, tuple(map(int, a)), tuple(map(int, b)), (255, 255, 255), thickness)
+
+
+def draw_clean_circle(canvas, points, thickness=3):
+    fit = fit_circle_kasa(points)
+    if fit is None:
+        draw_polyline(canvas, points, thickness)
+        return
+
+    cx, cy, r, rmse = fit
     center = (int(round(cx)), int(round(cy)))
     rr = int(round(r))
-    if fill:
-        cv2.circle(canvas, center, rr, (255, 255, 255), -1)
-    cv2.circle(canvas, center, rr, (255, 255, 255), thickness)
 
-def draw_rect(canvas, corners, thickness=3, fill=False):
-    pts = np.array(corners, dtype=np.int32).reshape((-1, 1, 2))
-    if fill:
-        cv2.fillPoly(canvas, [pts], (255, 255, 255))
+    if rr > 0:
+        cv2.circle(canvas, center, rr, (255, 255, 255), thickness)
+    else:
+        draw_polyline(canvas, points, thickness)
+
+
+def order_polygon_vertices(corners):
+    pts = np.array(corners, dtype=np.float32)
+    c = np.mean(pts, axis=0)
+
+    def ang(p):
+        return np.arctan2(p[1] - c[1], p[0] - c[0])
+
+    pts = sorted(pts.tolist(), key=ang)
+    return [(int(round(x)), int(round(y))) for x, y in pts]
+
+
+def draw_clean_rectangle(canvas, points, thickness=3):
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    scale = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
+
+    rect = try_rectangle(points, eps=0.05 * scale, right_angle_tol=35.0)
+    if rect is None:
+        draw_polyline(canvas, points, thickness)
+        return
+
+    rect = order_polygon_vertices(rect)
+    pts = np.array(rect, dtype=np.int32).reshape((-1, 1, 2))
     cv2.polylines(canvas, [pts], True, (255, 255, 255), thickness)
 
-def to_world(p_screen, scale, ox, oy):
-    """screen -> world"""
-    return (int(round((p_screen[0] - ox) / scale)), int(round((p_screen[1] - oy) / scale)))
 
-def to_screen(p_world, scale, ox, oy):
-    """world -> screen"""
-    return (int(round(p_world[0] * scale + ox)), int(round(p_world[1] * scale + oy)))
+def draw_clean_triangle(canvas, points, thickness=3):
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    scale = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
 
-def snap_to_grid(p, g):
-    return (int(round(p[0] / g) * g), int(round(p[1] / g) * g))
+    tri = try_triangle(points, eps=0.05 * scale)
+    if tri is None:
+        draw_polyline(canvas, points, thickness)
+        return
 
-def is_open_palm(hand, W, H):
-    """
-    Simple open-palm heuristic:
-    fingertips are far from wrist on average.
-    Tune threshold if needed.
-    """
-    wrist = np.array([hand[0].x * W, hand[0].y * H], dtype=float)
-    tips = [4, 8, 12, 16, 20]
-    d = []
-    for i in tips:
-        p = np.array([hand[i].x * W, hand[i].y * H], dtype=float)
-        d.append(np.linalg.norm(p - wrist))
-    return float(np.mean(d)) > 170.0  # tune 150..220
+    tri = order_polygon_vertices(tri)
+    pts = np.array(tri, dtype=np.int32).reshape((-1, 1, 2))
+    cv2.polylines(canvas, [pts], True, (255, 255, 255), thickness)
+
+
+def draw_final_shape(canvas, points, label, thickness=3):
+    if label == "line":
+        draw_clean_line(canvas, points, thickness)
+    elif label == "circle":
+        draw_clean_circle(canvas, points, thickness)
+    elif label == "rectangle":
+        draw_clean_rectangle(canvas, points, thickness)
+    elif label == "triangle":
+        draw_clean_triangle(canvas, points, thickness)
+    else:
+        draw_polyline(canvas, points, thickness)
+
+
+def open_camera():
+    for idx in range(2):
+        cap = cv2.VideoCapture(idx)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        ok, frame = cap.read()
+        if ok and frame is not None:
+            return cap, idx
+        cap.release()
+    return None, None
+
+# =========================================================
+# SHAPE SAVING
+# =========================================================
+SAVE_DIR = Path("shape_log")
+
+def save_shape_result(points, label):
+    SAVE_DIR.mkdir(exist_ok=True)
+    timestamp = time.time()
+    dt_str = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d_%H-%M-%S-%f")
+
+    entry = {
+        "timestamp": dt_str,
+        "timestamp_unix": round(timestamp, 3),
+        "label": label
+    }
+
+    if label == "circle":
+        fit = fit_circle_kasa(points)
+        if fit is not None:
+            cx, cy, r, _ = fit
+            entry["cx"] = round(cx, 2)
+            entry["cy"] = round(cy, 2)
+            entry["r"]  = round(r,  2)
+
+    elif label == "rectangle":
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        scale = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
+        rect = try_rectangle(points, eps=0.05 * scale, right_angle_tol=35.0)
+        if rect is not None:
+            rect = order_polygon_vertices(rect)
+            entry["corners"] = [[int(p[0]), int(p[1])] for p in rect]
+
+    elif label == "triangle":
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        scale = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
+        tri = try_triangle(points, eps=0.05 * scale)
+        if tri is not None:
+            tri = order_polygon_vertices(tri)
+            entry["corners"] = [[int(p[0]), int(p[1])] for p in tri]
+
+    elif label == "line":
+        entry["start"] = [int(points[0][0]),  int(points[0][1])]
+        entry["end"]   = [int(points[-1][0]), int(points[-1][1])]
+
+    elif label == "freehand":
+        entry["points"] = [[int(p[0]), int(p[1])] for p in points]
+
+    filename = SAVE_DIR / f"{label}_{dt_str}.json"
+    with open(filename, "w") as f:
+        json.dump(entry, f, indent=2)
+
+    print(f"[save] {filename}")
 
 
 # =========================================================
-# Params
+# MEDIAPIPE
 # =========================================================
-SMOOTH_ALPHA = 0.25
+BASE_DIR = Path(__file__).resolve().parent
+model_path = BASE_DIR / "hand_landmarker.task"
 
-PINCH_THRESH_PX = 80
-
-PAUSE_SPEED_PX = 30.0
-PAUSE_TIME_S = 0.25
-SNAP_WINDOW = 20
-LINE_TOL_PX = 6.0
-
-CLOSE_THRESH_PX = 60.0
-ANGLE_STEP_DEG = 45
-
-SHAPE_PAUSE_TIME = 0.35
-
-CIRCLE_REL_TOL = 0.18
-RECT_RIGHT_ANGLE_TOL = 50.0
-
-# Eraser
-ERASER_RADIUS_WORLD = 35  # in world pixels
-
-# Grid
-GRID_SIZE = 25
-SHOW_GRID = False
-GRID_SNAP = False
-
-# Zoom/pan
-VIEW_SCALE_MIN = 0.6
-VIEW_SCALE_MAX = 3.0
-
-# =========================================================
-# MediaPipe
-# =========================================================
-model_path = "apps/capture_client/hand_landmarker.task"
-base_options = python.BaseOptions(model_asset_path=model_path)
+base_options = python.BaseOptions(model_asset_path=str(model_path))
 options = vision.HandLandmarkerOptions(
     base_options=base_options,
     running_mode=vision.RunningMode.VIDEO,
-    num_hands=2,  # needed for zoom/pan
+    num_hands=1,
     min_hand_detection_confidence=0.5,
     min_hand_presence_confidence=0.5,
     min_tracking_confidence=0.5,
@@ -267,24 +471,13 @@ options = vision.HandLandmarkerOptions(
 landmarker = vision.HandLandmarker.create_from_options(options)
 
 # =========================================================
-# Camera
+# CAMERA
 # =========================================================
-def open_camera():
-    for idx in range(2):
-        cap = cv2.VideoCapture(idx)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        ok, frame = cap.read()
-        print("probe", idx, "ret:", ok, "shape:", None if frame is None else frame.shape)
-        if ok and frame is not None:
-            return cap, idx
-        cap.release()
-    return None, None
-
 cap, cam_idx = open_camera()
 if cap is None:
     print("No camera found.")
     raise SystemExit(1)
+
 print("Using camera index:", cam_idx)
 
 # Flask app
@@ -317,37 +510,18 @@ def run_server():
 threading.Thread(target=run_server, daemon=True).start()
 
 # =========================================================
-# State
+# STATE
 # =========================================================
 canvas = None
 current = []
-strokes = []
+last_completed_stroke = None
+pending_stroke_for_render = None
 
-still_time = 0.0
-last_t = None
-last_pt_screen = None
-pen_down_prev = False
 xf = yf = None
+pen_down_prev = False
 
-# recognition buffer
-shape_buffer = None
-shape_timer = 0.0
-
-# undo/redo
-undo_stack = []
-redo_stack = []
-
-# eraser state
-eraser_active_prev = False
-
-# view transform (world -> screen)
-view_scale = 1.0
-view_ox = 0.0
-view_oy = 0.0
-
-# two-hand gesture state
-twohand_prev_mid = None
-twohand_prev_dist = None
+last_fpga_label = "none"
+last_final_label = "none"
 
 t0 = time.time()
 
@@ -355,30 +529,20 @@ t0 = time.time()
 
 
 # =========================================================
-# Main loop
+# MAIN LOOP
 # =========================================================
 while True:
-    #print("main loop running")
-
     ok, frame = cap.read()
     if not ok or frame is None:
         time.sleep(0.05)
         continue
 
-    frame = np.ascontiguousarray(frame)
     frame = cv2.flip(frame, 1)
     H, W = frame.shape[:2]
 
     if canvas is None:
         canvas = np.zeros((H, W, 3), dtype=np.uint8)
 
-    t = time.time()
-    if last_t is None:
-        last_t = t
-    dt = t - last_t
-    last_t = t
-
-    # ---- MediaPipe ----
 
     # improve latency
 
@@ -386,292 +550,112 @@ while True:
 
     rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-    ts_ms = int((t - t0) * 1000)
+    ts_ms = int((time.time() - t0) * 1000)
     result = landmarker.detect_for_video(mp_image, ts_ms)
 
-    # defaults
-    cursor_screen = None
+    cursor = None
     pen_down = False
-    hands_n = 0
-    open_palm_1 = False
-    open_palm_2 = False
-    hand1 = None
-    hand2 = None
 
     if result.hand_landmarks:
-        hands_n = len(result.hand_landmarks)
-        hand1 = result.hand_landmarks[0]
-        open_palm_1 = is_open_palm(hand1, W, H)
+        hand = result.hand_landmarks[0]
 
-        # cursor from hand1 index tip
-        ix, iy = hand1[8].x, hand1[8].y
-        tx, ty = hand1[4].x, hand1[4].y
-        cursor_screen = (int(ix * W), int(iy * H))
+        ix, iy = hand[8].x, hand[8].y
+        tx, ty = hand[4].x, hand[4].y
 
+        cursor_raw = (int(ix * W), int(iy * H))
         pinch_px = np.hypot((ix - tx) * W, (iy - ty) * H)
         pen_down = pinch_px < PINCH_THRESH_PX
 
-        if hands_n >= 2:
-            hand2 = result.hand_landmarks[1]
-            open_palm_2 = is_open_palm(hand2, W, H)
-
-    # =====================================================
-    # Two-hand zoom/pan (two open palms, not drawing)
-    # =====================================================
-    if hands_n >= 2 and open_palm_1 and open_palm_2 and (not pen_down):
-        p1 = (int(hand1[8].x * W), int(hand1[8].y * H))
-        p2 = (int(hand2[8].x * W), int(hand2[8].y * H))
-        mid = ((p1[0] + p2[0]) * 0.5, (p1[1] + p2[1]) * 0.5)
-        d12 = float(np.hypot(p1[0] - p2[0], p1[1] - p2[1]))
-
-        if twohand_prev_mid is not None and twohand_prev_dist is not None:
-            # pan by midpoint delta
-            dx = mid[0] - twohand_prev_mid[0]
-            dy = mid[1] - twohand_prev_mid[1]
-            view_ox += dx
-            view_oy += dy
-
-            # zoom by distance ratio, anchored at mid (screen)
-            if twohand_prev_dist > 1e-6:
-                ratio = d12 / twohand_prev_dist
-                new_scale = float(np.clip(view_scale * ratio, VIEW_SCALE_MIN, VIEW_SCALE_MAX))
-
-                # keep world point under "mid" fixed
-                wx = (mid[0] - view_ox) / max(1e-6, view_scale)
-                wy = (mid[1] - view_oy) / max(1e-6, view_scale)
-                view_scale = new_scale
-                view_ox = mid[0] - wx * view_scale
-                view_oy = mid[1] - wy * view_scale
-
-        twohand_prev_mid = mid
-        twohand_prev_dist = d12
-    else:
-        twohand_prev_mid = None
-        twohand_prev_dist = None
-
-    # =====================================================
-    # Smooth cursor in SCREEN space
-    # =====================================================
-    if cursor_screen is not None:
         if xf is None:
-            xf, yf = cursor_screen
+            xf, yf = cursor_raw
         else:
-            xf = (1 - SMOOTH_ALPHA) * xf + SMOOTH_ALPHA * cursor_screen[0]
-            yf = (1 - SMOOTH_ALPHA) * yf + SMOOTH_ALPHA * cursor_screen[1]
-        cursor_f_screen = (int(xf), int(yf))
-    else:
-        cursor_f_screen = None
+            xf = (1 - SMOOTH_ALPHA) * xf + SMOOTH_ALPHA * cursor_raw[0]
+            yf = (1 - SMOOTH_ALPHA) * yf + SMOOTH_ALPHA * cursor_raw[1]
 
-    # speed in screen px/s
-    if cursor_f_screen is not None and last_pt_screen is not None and dt > 1e-6:
-        speed = dist(cursor_f_screen, last_pt_screen) / dt
-    else:
-        speed = 0.0
-    if cursor_f_screen is not None:
-        last_pt_screen = cursor_f_screen
+        cursor = (int(xf), int(yf))
 
-    # map to WORLD for drawing/erasing
-    cursor_world = None
-    if cursor_f_screen is not None:
-        cursor_world = to_world(cursor_f_screen, view_scale, view_ox, view_oy)
-        if GRID_SNAP and pen_down:
-            cursor_world = snap_to_grid(cursor_world, GRID_SIZE)
-
-    # =====================================================
-    # Eraser gesture (open palm with hand1, not drawing)
-    # =====================================================
-    eraser_active = (hands_n >= 1 and open_palm_1 and (not pen_down) and cursor_world is not None)
-
-    if eraser_active and (not eraser_active_prev):
-        # snapshot once at eraser start
-        undo_stack.append(canvas.copy())
-        redo_stack.clear()
-
-    if eraser_active and cursor_world is not None:
-        cv2.circle(canvas, cursor_world, ERASER_RADIUS_WORLD, (0, 0, 0), -1)
-
-    eraser_active_prev = eraser_active
-
-    # =====================================================
-    # Drawing (pen down)
-    # =====================================================
-    if pen_down and cursor_world is not None:
+    # Draw current stroke preview
+    if pen_down and cursor is not None:
         if not current:
-            current.append(cursor_world)
-            still_time = 0.0
+            current.append(cursor)
         else:
-            if dist(cursor_world, current[-1]) >= 2.0:
-                current.append(cursor_world)
+            if dist(cursor, current[-1]) >= 2.0:
+                current.append(cursor)
 
-        if speed < PAUSE_SPEED_PX:
-            still_time += dt
-        else:
-            still_time = 0.0
-
-        # snap-to-line on pause (+ angle snapping) in WORLD
-        if still_time >= PAUSE_TIME_S and len(current) >= SNAP_WINDOW:
-            seg = current[-SNAP_WINDOW:]
-            a, b = seg[0], seg[-1]
-            max_d = max(point_line_distance(p, a, b) for p in seg)
-            if max_d <= LINE_TOL_PX:
-                a2, b2 = snap_angle_endpoint(a, b, ANGLE_STEP_DEG)
-                current = current[:-SNAP_WINDOW] + [a2, b2]
-            still_time = 0.0
-
-    # =====================================================
-    # Pen-up: store the stroke, recognise AFTER pause
-    # =====================================================
+    # Pen-up -> send stroke, but do NOT commit to canvas yet
     if (not pen_down) and pen_down_prev and current:
-        shape_buffer = current[:]
-        shape_timer = time.time()
-        strokes.append(current)
+        if len(current) >= MIN_POINTS:
+            last_completed_stroke = current[:]
+            pending_stroke_for_render = current[:]
 
-        print("[stroke] finished drawing")
-        send_stroke_to_pynq(current)
+            save_stroke_locally(current, label="test", root="holdout_test")
+            send_features_to_pynq(current)
+        else:
+            print("[stroke] ignored: too short")
 
         current = []
-        still_time = 0.0
 
     pen_down_prev = pen_down
 
-    # =====================================================
-    # Shape recognition after pause (commit to canvas)
-    # =====================================================
-    shape_label = "none"
-    if shape_buffer is not None and (time.time() - shape_timer) >= SHAPE_PAUSE_TIME:
-        pts = resample_polyline(shape_buffer, step=8.0)
+    # Poll FPGA reply
+    reply = poll_pynq_reply()
+    if reply is not None:
+        if "error" in reply:
+            print("[udp] pynq error:", reply["error"])
+        else:
+            fpga_label = reply.get("label", "none")
+            last_fpga_label = fpga_label
 
-        closed = (len(pts) >= 10 and dist(pts[0], pts[-1]) < CLOSE_THRESH_PX)
-        if closed and pts[0] != pts[-1]:
-            pts.append(pts[0])
+            if last_completed_stroke is not None:
+                last_final_label = final_shape_decision(last_completed_stroke, fpga_label)
+            else:
+                last_final_label = fpga_label
 
-        xs = [p[0] for p in pts]
-        ys = [p[1] for p in pts]
-        scale = max(20.0, max(max(xs) - min(xs), max(ys) - min(ys)))
+            print(f"[decision] FPGA={last_fpga_label} FINAL={last_final_label}")
 
-        drew = False
+            if pending_stroke_for_render is not None:
+                draw_final_shape(canvas, pending_stroke_for_render, last_final_label, thickness=3)
+                save_shape_result(pending_stroke_for_render, last_final_label)
+                pending_stroke_for_render = None
 
-        # snapshot BEFORE modifying canvas
-        undo_stack.append(canvas.copy())
-        redo_stack.clear()
-
-        # circle
-        if closed and len(pts) >= 25:
-            fit = fit_circle_kasa(pts[:-1])
-            if fit is not None:
-                cx, cy, r, rmse = fit
-                rel = rmse / max(1.0, r)
-                if 15 <= r <= 0.9 * scale and rel <= CIRCLE_REL_TOL:
-                    draw_circle(canvas, cx, cy, r, thickness=3, fill=True)
-                    shape_label = "circle"
-                    drew = True
-
-        # rectangle (lenient)
-        if (not drew) and closed:
-            eps = 0.06 * scale
-            rect = try_rectangle(pts, eps=eps, right_angle_tol=RECT_RIGHT_ANGLE_TOL)
-            if rect is not None:
-                draw_rect(canvas, rect, thickness=3, fill=True)
-                shape_label = "rect"
-                drew = True
-
-        # fallback stroke
-        if not drew:
-            for i in range(1, len(shape_buffer)):
-                cv2.line(canvas, shape_buffer[i - 1], shape_buffer[i], (255, 255, 255), 3)
-            shape_label = "stroke"
-
-        shape_buffer = None
-
-    # =====================================================
-    # Display: warp canvas using view transform
-    # =====================================================
+    # Display
     display = frame.copy()
 
-    # warp canvas into screen coordinates
-    M = np.array([[view_scale, 0, view_ox],
-                  [0, view_scale, view_oy]], dtype=np.float32)
-    warped_canvas = cv2.warpAffine(canvas, M, (W, H), flags=cv2.INTER_NEAREST, borderValue=(0, 0, 0))
+    mask = canvas[:, :, 0] > 0
+    display[mask] = canvas[mask]
 
-    mask = warped_canvas[:, :, 0] > 0
-    display[mask] = warped_canvas[mask]
-
-    # grid overlay (screen space)
-    if SHOW_GRID:
-        step = GRID_SIZE
-        for x in range(0, W, step):
-            cv2.line(display, (x, 0), (x, H), (30, 30, 30), 1)
-        for y in range(0, H, step):
-            cv2.line(display, (0, y), (W, y), (30, 30, 30), 1)
-
-    # preview current stroke (transform world -> screen)
     if len(current) >= 2:
         for i in range(1, len(current)):
-            a = to_screen(current[i - 1], view_scale, view_ox, view_oy)
-            b = to_screen(current[i], view_scale, view_ox, view_oy)
-            cv2.line(display, a, b, (200, 200, 200), 2)
+            cv2.line(display, current[i - 1], current[i], (200, 200, 200), 2)
 
-    # cursor
-    if cursor_f_screen is not None:
+    if cursor is not None:
         color = (0, 255, 0) if pen_down else (0, 0, 255)
-        if eraser_active:
-            color = (255, 0, 0)
-        cv2.circle(display, cursor_f_screen, 8, color, -1)
+        cv2.circle(display, cursor, 8, color, -1)
 
-    # HUD
-    cv2.putText(display,
-                f"hands={hands_n} pinch={'DOWN' if pen_down else 'UP'} "
-                f"eraser={'ON' if eraser_active else 'OFF'} "
-                f"zoom={view_scale:.2f} grid={'ON' if SHOW_GRID else 'OFF'} snap={'ON' if GRID_SNAP else 'OFF'}",
-                (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+    cv2.putText(display, f"PYNQ -> {PYNQ_IP}:{PYNQ_PORT}", (20, 35),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
-    cv2.putText(display,
-                f"shape={shape_label} | Z=undo Y=redo | G=grid | S=snap | C=clear | ESC=quit",
-                (20, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+    cv2.putText(display, f"FPGA: {last_fpga_label}", (20, 70),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-    cv2.putText(display,
-                "Two open palms: pan + zoom (move hands apart/together)",
-                (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    cv2.putText(display,
-            f"PYNQ → {PYNQ_IP}:{PYNQ_PORT}",
-            (20, 140),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0,255,255),
-            2)
+    cv2.putText(display, f"FINAL: {last_final_label}", (20, 105),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-    latest_frame = display
+    cv2.putText(display, "Pinch to draw | C=clear | ESC=quit", (20, 140),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+    cv2.imshow("FPGA Shape Classifier", display)
 
     k = cv2.waitKey(1) & 0xFF
     if k == 27:
         break
-
-    # clear
     if k in (ord('c'), ord('C')):
-        undo_stack.append(canvas.copy())
-        redo_stack.clear()
         canvas[:] = 0
-        strokes.clear()
         current = []
-        shape_buffer = None
-        still_time = 0.0
-
-    # undo / redo
-    if k in (ord('z'), ord('Z')) and undo_stack:
-        redo_stack.append(canvas.copy())
-        canvas[:] = undo_stack.pop()
-
-    if k in (ord('y'), ord('Y')) and redo_stack:
-        undo_stack.append(canvas.copy())
-        canvas[:] = redo_stack.pop()
-
-    # grid toggle
-    if k in (ord('g'), ord('G')):
-        SHOW_GRID = not SHOW_GRID
-
-    # grid snap toggle
-    if k in (ord('s'), ord('S')):
-        GRID_SNAP = not GRID_SNAP
+        last_completed_stroke = None
+        pending_stroke_for_render = None
+        last_fpga_label = "none"
+        last_final_label = "none"
 
 cap.release()
 cv2.destroyAllWindows()
