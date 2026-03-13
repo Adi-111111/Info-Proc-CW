@@ -8,6 +8,12 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from decimal import Decimal
+import json
+import os
+import boto3
+from botocore.config import Config
+from botocore.exceptions import ClientError
+from decimal import Decimal
 
 MAX_OBJECTS = 5000
 
@@ -367,7 +373,9 @@ app = web.Application() #create web server
 sio.attach(app) #attach websockets to the server to allow continuous information exchange between server and client 
 
 # In-memory cache (loaded from DynamoDB on first access)
+# In-memory cache (loaded from DynamoDB on first access)
 boards = {}
+boards[DEFAULT_BOARD] = db_load_board(DEFAULT_BOARD)
 boards[DEFAULT_BOARD] = db_load_board(DEFAULT_BOARD)
 
 connected_clients = set() #tracks connected sockets
@@ -393,6 +401,7 @@ async def join_board(sid, data):
     board_id = data["board_id"]
 
     if board_id not in boards:
+        boards[board_id] = db_load_board(board_id)
         boards[board_id] = db_load_board(board_id)
 
     await sio.save_session(sid, {"board_id": board_id})
@@ -468,8 +477,12 @@ async def pynq_event(sid, shape):
         if event == "ADD_OBJECT":
             boards[board_id][payload["object_id"]] = payload
             db_put_object(board_id, payload)
+            db_put_object(board_id, payload)
 
         elif event == "REMOVE_OBJECT":
+            object_id = payload["object_id"]
+            boards[board_id].pop(object_id, None)
+            db_delete_object(board_id, object_id)
             object_id = payload["object_id"]
             boards[board_id].pop(object_id, None)
             db_delete_object(board_id, object_id)
@@ -516,6 +529,7 @@ async def whiteboard_event(sid, shape):
             return
 
         boards[board_id][obj_id] = payload
+        db_put_object(board_id, payload)
         db_put_object(board_id, payload)
 
         message = {
