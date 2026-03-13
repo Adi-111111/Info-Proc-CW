@@ -5,11 +5,12 @@ import json
 import socket
 from pathlib import Path
 import sys
-
+import os
+from pathlib import Path
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-
+from datetime import datetime
 # =========================================================
 # Import preprocessing
 # =========================================================
@@ -396,6 +397,61 @@ def open_camera():
         cap.release()
     return None, None
 
+# =========================================================
+# SHAPE SAVING
+# =========================================================
+SAVE_DIR = Path("shape_log")
+
+def save_shape_result(points, label):
+    SAVE_DIR.mkdir(exist_ok=True)
+    timestamp = time.time()
+    dt_str = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d_%H-%M-%S-%f")
+
+    entry = {
+        "timestamp": dt_str,
+        "timestamp_unix": round(timestamp, 3),
+        "label": label
+    }
+
+    if label == "circle":
+        fit = fit_circle_kasa(points)
+        if fit is not None:
+            cx, cy, r, _ = fit
+            entry["cx"] = round(cx, 2)
+            entry["cy"] = round(cy, 2)
+            entry["r"]  = round(r,  2)
+
+    elif label == "rectangle":
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        scale = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
+        rect = try_rectangle(points, eps=0.05 * scale, right_angle_tol=35.0)
+        if rect is not None:
+            rect = order_polygon_vertices(rect)
+            entry["corners"] = [[int(p[0]), int(p[1])] for p in rect]
+
+    elif label == "triangle":
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        scale = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
+        tri = try_triangle(points, eps=0.05 * scale)
+        if tri is not None:
+            tri = order_polygon_vertices(tri)
+            entry["corners"] = [[int(p[0]), int(p[1])] for p in tri]
+
+    elif label == "line":
+        entry["start"] = [int(points[0][0]),  int(points[0][1])]
+        entry["end"]   = [int(points[-1][0]), int(points[-1][1])]
+
+    elif label == "freehand":
+        entry["points"] = [[int(p[0]), int(p[1])] for p in points]
+
+    filename = SAVE_DIR / f"{label}_{dt_str}.json"
+    with open(filename, "w") as f:
+        json.dump(entry, f, indent=2)
+
+    print(f"[save] {filename}")
+
 
 # =========================================================
 # MEDIAPIPE
@@ -522,6 +578,7 @@ while True:
 
             if pending_stroke_for_render is not None:
                 draw_final_shape(canvas, pending_stroke_for_render, last_final_label, thickness=3)
+                save_shape_result(pending_stroke_for_render, last_final_label)
                 pending_stroke_for_render = None
 
     # Display
