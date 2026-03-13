@@ -3,3 +3,7 @@
 *.p8
 *.ppk
 apps/whiteboard_server/Whiteboard-final.pemZone.Identifier
+apps/whiteboard_server/Whiteboard-final.pem
+__pycache__/
+*.pyc
+holdout_test/test/

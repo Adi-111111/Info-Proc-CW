@@ -532,7 +532,7 @@ def video_feed():
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 def run_server():
-    app.run(host="0.0.0.0", port=8000, threaded=True)
+    app.run(host="0.0.0.0", port=8001, threaded=True)
 
 threading.Thread(target=run_server, daemon=True).start()
 
@@ -671,7 +671,9 @@ while True:
     cv2.putText(display, "Pinch to draw | C=clear | ESC=quit", (20, 140),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-    cv2.imshow("FPGA Shape Classifier", display)
+    # cv2.imshow("FPGA Shape Classifier", display) -- debug window
+
+    latest_frame = display
 
     k = cv2.waitKey(1) & 0xFF
     if k == 27:
