@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+<meta charset="UTF-8">
 <title>Collaborative Whiteboard</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
@@ -14,51 +15,258 @@ body{
   font-family:Arial, sans-serif;
 }
 
-/* main container */
+/* ========================
+   BOARD SELECTION LOBBY
+   ======================== */
+
+#lobby{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  width:100vw;
+  height:100vh;
+  background:#f5f5f5;
+}
+
+#lobby h1{
+  margin-bottom:24px;
+  color:#333;
+}
+
+#board-list{
+  list-style:none;
+  padding:0;
+  margin:0 0 24px 0;
+  width:360px;
+  max-height:400px;
+  overflow-y:auto;
+}
+
+#board-list li{
+  padding:14px 18px;
+  margin-bottom:8px;
+  background:white;
+  border:2px solid #ddd;
+  border-radius:8px;
+  cursor:pointer;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  transition:border-color 0.15s, box-shadow 0.15s;
+}
+
+#board-list li:hover{
+  border-color:#4a90d9;
+  box-shadow:0 2px 8px rgba(74,144,217,0.2);
+}
+
+#board-list li .delete-btn{
+  background:none;
+  border:none;
+  color:#ccc;
+  font-size:16px;
+  cursor:pointer;
+  padding:4px 6px;
+  border-radius:4px;
+  transition:color 0.15s, background 0.15s;
+}
+
+#board-list li .delete-btn:hover{
+  color:#e53e3e;
+  background:rgba(229,62,62,0.1);
+}
+
+#board-list li .board-name{
+  font-weight:bold;
+  color:#333;
+}
+
+#board-list li .board-id{
+  font-size:12px;
+  color:#999;
+}
+
+#create-section{
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+
+#create-section input{
+  padding:10px 14px;
+  border:2px solid #ddd;
+  border-radius:8px;
+  font-size:14px;
+  outline:none;
+  width:220px;
+}
+
+#create-section input:focus{
+  border-color:#4a90d9;
+}
+
+#create-section button{
+  padding:10px 18px;
+  background:#4a90d9;
+  color:white;
+  border:none;
+  border-radius:8px;
+  font-size:14px;
+  cursor:pointer;
+  transition:background 0.15s;
+}
+
+#create-section button:hover{
+  background:#357abd;
+}
+
+#no-boards{
+  color:#999;
+  margin-bottom:16px;
+}
+
+/* ========================
+   CONFIRM MODAL
+   ======================== */
+
+#modal-overlay{
+  display:none;
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,0.4);
+  z-index:100;
+  align-items:center;
+  justify-content:center;
+}
+
+#modal-overlay.active{
+  display:flex;
+}
+
+#modal-box{
+  background:white;
+  border-radius:12px;
+  padding:28px 32px;
+  width:320px;
+  box-shadow:0 8px 30px rgba(0,0,0,0.2);
+  text-align:center;
+}
+
+#modal-box h3{
+  margin:0 0 8px 0;
+  color:#333;
+  font-size:17px;
+}
+
+#modal-box p{
+  margin:0 0 24px 0;
+  color:#666;
+  font-size:14px;
+}
+
+#modal-actions{
+  display:flex;
+  gap:10px;
+  justify-content:center;
+}
+
+#modal-actions button{
+  padding:9px 22px;
+  border:none;
+  border-radius:8px;
+  font-size:14px;
+  cursor:pointer;
+  transition:background 0.15s;
+}
+
+#modal-cancel{
+  background:#eee;
+  color:#333;
+}
+
+#modal-cancel:hover{
+  background:#ddd;
+}
+
+#modal-confirm{
+  background:#e53e3e;
+  color:white;
+}
+
+#modal-confirm:hover{
+  background:#c53030;
+}
+
+/* ========================
+   WHITEBOARD APP
+   ======================== */
 
 #app{
+  display:none;
   position:relative;
   width:100vw;
   height:100vh;
   background:#f5f5f5;
 }
 
+/* top bar showing current board */
+#top-bar{
+  position:absolute;
+  top:0;
+  left:0;
+  right:0;
+  height:40px;
+  background:rgba(0,0,0,0.7);
+  color:white;
+  display:flex;
+  align-items:center;
+  padding:0 16px;
+  font-size:14px;
+  z-index:10;
+  gap:12px;
+}
+
+#top-bar #back-btn{
+  background:none;
+  border:1px solid rgba(255,255,255,0.4);
+  color:white;
+  padding:4px 12px;
+  border-radius:4px;
+  cursor:pointer;
+  font-size:13px;
+}
+
+#top-bar #back-btn:hover{
+  background:rgba(255,255,255,0.15);
+}
+
 /* WHITEBOARD */
 
 #board{
   position:absolute;
-  top:0;
+  top:40px;
   left:0;
   width:100%;
-  height:100%;
+  height:calc(100% - 40px);
   background:white;
 }
 
 /* CAMERA FLOATING WINDOW */
 
 #camera-window{
-
   position:absolute;
-
   bottom:20px;
   right:20px;
-
   width:420px;
   aspect-ratio:16/9;
-
   background:black;
-
   border-radius:10px;
-
   overflow:hidden;
-
   box-shadow:0 8px 25px rgba(0,0,0,0.3);
-
   border:2px solid white;
-
   cursor: grab;
   user-select: none;
-
   resize: both;
 }
 
@@ -73,19 +281,13 @@ body{
 /* small label */
 
 #camera-label{
-
   position:absolute;
   top:8px;
   left:8px;
-
   font-size:12px;
-
   color:white;
-
   background:rgba(0,0,0,0.6);
-
   padding:3px 6px;
-
   border-radius:4px;
 }
 
@@ -94,8 +296,41 @@ body{
 
 <body>
 
+<!-- ========================
+     BOARD SELECTION LOBBY
+     ======================== -->
+
+<div id="modal-overlay">
+  <div id="modal-box">
+    <h3>Delete board?</h3>
+    <p id="modal-msg"></p>
+    <div id="modal-actions">
+      <button id="modal-cancel">Cancel</button>
+      <button id="modal-confirm">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div id="lobby">
+  <h1>🎨 Whiteboard</h1>
+  <p id="no-boards" style="display:none">No boards yet — create one below.</p>
+  <ul id="board-list"></ul>
+  <div id="create-section">
+    <input id="new-board-name" type="text" placeholder="New board name…">
+    <button onclick="createBoard()">+ Create</button>
+  </div>
+</div>
+
+<!-- ========================
+     WHITEBOARD APP
+     ======================== -->
 
 <div id="app">
+
+  <div id="top-bar">
+    <button id="back-btn" onclick="leaveBoard()">← Boards</button>
+    <span id="board-label"></span>
+  </div>
 
   <!-- WHITEBOARD (main UI) -->
   <canvas id="board"></canvas>
@@ -112,64 +347,178 @@ body{
 
 <script>
 
-const SERVER_URL = "http://13.40.61.155:5000";
-const BOARD_ID = "board1";
+// ========================
+// CONFIRM MODAL
+// ========================
 
-const socket = io(SERVER_URL);
-const canvas = new fabric.Canvas("board", {
-  selection:false
+const modalOverlay = document.getElementById("modal-overlay");
+let modalCallback = null;
+
+function showConfirm(message, onConfirm){
+  document.getElementById("modal-msg").textContent = message;
+  modalCallback = onConfirm;
+  modalOverlay.classList.add("active");
+}
+
+document.getElementById("modal-confirm").onclick = () => {
+  modalOverlay.classList.remove("active");
+  if (modalCallback) modalCallback();
+  modalCallback = null;
+};
+
+document.getElementById("modal-cancel").onclick = () => {
+  modalOverlay.classList.remove("active");
+  modalCallback = null;
+};
+
+modalOverlay.addEventListener("click", (e) => {
+  if (e.target === modalOverlay) {
+    modalOverlay.classList.remove("active");
+    modalCallback = null;
+  }
 });
 
-resizeCanvas();
+const SERVER_URL = "http://13.40.61.155:5000";
 
-window.addEventListener("resize", resizeCanvas);
+const socket = io(SERVER_URL);
+
+let currentBoardId = null;
+let canvas = null;
+
+
+// ========================
+// LOBBY
+// ========================
+
+socket.on("connect", () => {
+  console.log("Connected:", socket.id);
+  refreshBoards();
+});
+
+function refreshBoards(){
+  socket.emit("list_boards");
+}
+
+socket.on("LIST_BOARDS", (boards) => {
+  const list = document.getElementById("board-list");
+  const noBoards = document.getElementById("no-boards");
+
+  list.innerHTML = "";
+
+  if (boards.length === 0){
+    noBoards.style.display = "block";
+    return;
+  }
+
+  noBoards.style.display = "none";
+
+  boards.forEach(b => {
+    const li = document.createElement("li");
+    li.innerHTML = `
+      <div style="flex:1;cursor:pointer" class="board-info">
+        <div class="board-name">${b.name}</div>
+        <div class="board-id">${b.board_id}</div>
+      </div>
+      <button class="delete-btn" title="Delete board">✕</button>
+    `;
+    li.querySelector(".board-info").onclick = () => joinBoard(b.board_id, b.name);
+    li.querySelector(".delete-btn").onclick = (e) => {
+      e.stopPropagation();
+      showConfirm(`"${b.name}" will be permanently deleted.`, () => {
+        socket.emit("delete_board", { board_id: b.board_id });
+      });
+    };
+    list.appendChild(li);
+  });
+});
+
+function createBoard(){
+  const input = document.getElementById("new-board-name");
+  const name = input.value.trim();
+  if (!name) return;
+
+  // Generate a simple ID from the name
+  const board_id = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") + "_" + Date.now();
+
+  socket.emit("create_board", { board_id, name });
+  input.value = "";
+}
+
+socket.on("BOARD_CREATED", () => {
+  refreshBoards();
+});
+
+socket.on("BOARD_DELETED", () => {
+  refreshBoards();
+});
+
+
+// ========================
+// JOIN / LEAVE BOARD
+// ========================
+
+function joinBoard(boardId, boardName){
+  currentBoardId = boardId;
+
+  // Switch UI
+  document.getElementById("lobby").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  document.getElementById("board-label").textContent = boardName || boardId;
+
+  // Init canvas if first time
+  if (!canvas){
+    canvas = new fabric.Canvas("board", { selection: false });
+    resizeCanvas();
+    window.addEventListener("resize", resizeCanvas);
+  } else {
+    canvas.clear();
+    resizeCanvas();
+  }
+
+  socket.emit("join_board", { board_id: boardId });
+}
+
+function leaveBoard(){
+  currentBoardId = null;
+
+  if (canvas) canvas.clear();
+
+  // Switch UI
+  document.getElementById("app").style.display = "none";
+  document.getElementById("lobby").style.display = "flex";
+
+  refreshBoards();
+}
 
 function resizeCanvas(){
-
+  if (!canvas) return;
   canvas.setWidth(window.innerWidth);
-  canvas.setHeight(window.innerHeight);
-
+  canvas.setHeight(window.innerHeight - 40);
   canvas.renderAll();
 }
 
 
 // ========================
-// CONNECTION
+// BOARD EVENTS
 // ========================
 
-socket.on("connect", () => {
-  console.log("Connected:", socket.id);
-  socket.emit("join_board", { board_id: BOARD_ID });
-});
-
-
 socket.on("LOAD_BOARD", (data) => {
-
   console.log("Loading board");
-
-  canvas.clear();
-
+  if (canvas) canvas.clear();
   for (const id in data){
     renderObject(data[id]);
   }
-
 });
 
-
 socket.on("board_event", (msg) => {
-
   const { event, payload } = msg;
-
   if (event === "ADD_OBJECT"){
     renderObject(payload);
   }
-
   if (event === "REMOVE_OBJECT"){
     removeObject(payload.object_id);
   }
-
 });
-
 
 socket.on("board_event", msg => {
   console.log("BOARD EVENT:", msg);
@@ -196,20 +545,15 @@ function renderObject(obj){
       obj.corners = obj.params.corners;
 
     if ("center" in obj.params){
-
       obj.cx = obj.params.center[0];
       obj.cy = obj.params.center[1];
       obj.r  = obj.params.radius;
-
     }
     else if ("cx" in obj.params){
-
       obj.cx = obj.params.cx;
       obj.cy = obj.params.cy;
       obj.r  = obj.params.r;
-
     }
-
   }
 
   // ====================
@@ -217,57 +561,45 @@ function renderObject(obj){
   // ====================
 
   if (obj.type === "polyline" || obj.type === "stroke"){
-
     if (!obj.points) return;
-
     const pathData = pointsToPath(obj.points);
-
     const path = new fabric.Path(pathData,{
       stroke:"black",
       fill:"",
       strokeWidth:3,
       objectId:obj.object_id
     });
-
     canvas.add(path);
   }
-
 
   // ====================
   // RECTANGLE
   // ====================
 
   if (obj.type === "rectangle" || obj.type === "rect"){
-
     if (!obj.corners){
       console.warn("Rectangle missing corners:", obj);
       return;
     }
-
     const pts = obj.corners.map(c => ({
       x:c[0],
       y:c[1]
     }));
-
     const poly = new fabric.Polygon(pts,{
       stroke:"black",
       fill:"transparent",
       strokeWidth:3,
       objectId:obj.object_id
     });
-
     canvas.add(poly);
   }
-
 
   // ====================
   // CIRCLE
   // ====================
 
   if (obj.type === "circle"){
-
     if (obj.cx === undefined) return;
-
     const circle = new fabric.Circle({
       left:obj.cx - obj.r,
       top:obj.cy - obj.r,
@@ -277,35 +609,26 @@ function renderObject(obj){
       strokeWidth:3,
       objectId:obj.object_id
     });
-
     canvas.add(circle);
   }
 
   canvas.renderAll();
-
 }
 
 
 function removeObject(id){
-
   const obj = canvas.getObjects().find(o => o.objectId === id);
-
   if (obj)
     canvas.remove(obj);
-
 }
 
 
 function pointsToPath(points){
-
   let path = `M ${points[0][0]} ${points[0][1]}`;
-
   for (let i=1;i<points.length;i++){
     path += ` L ${points[i][0]} ${points[i][1]}`;
   }
-
   return path;
-
 }
 
 
@@ -320,35 +643,24 @@ let offsetX = 0;
 let offsetY = 0;
 
 camWindow.addEventListener("mousedown", (e) => {
-
   isDragging = true;
-
   const rect = camWindow.getBoundingClientRect();
-
   offsetX = e.clientX - rect.left;
   offsetY = e.clientY - rect.top;
-
   camWindow.style.cursor = "grabbing";
-
 });
 
 document.addEventListener("mousemove", (e) => {
-
   if(!isDragging) return;
-
   camWindow.style.left = (e.clientX - offsetX) + "px";
   camWindow.style.top = (e.clientY - offsetY) + "px";
-
   camWindow.style.right = "auto";
   camWindow.style.bottom = "auto";
-
 });
 
 document.addEventListener("mouseup", () => {
-
   isDragging = false;
   camWindow.style.cursor = "grab";
-
 });
 
 </script>

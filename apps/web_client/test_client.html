@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Whiteboard Test Client</title>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    #lobby, #board-view { margin-bottom: 20px; }
+    #board-view { display: none; }
+    .board-item {
+      padding: 8px 14px;
+      margin: 4px 0;
+      background: #eee;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      cursor: pointer;
+      display: inline-block;
+      margin-right: 8px;
+    }
+    .board-item:hover { background: #ddf; }
+    button { margin: 4px; padding: 6px 14px; }
+    #current-board { font-weight: bold; color: #4a90d9; }
+    pre { background: #f5f5f5; padding: 10px; max-height: 400px; overflow-y: auto; border: 1px solid #ddd; }
+    input { padding: 6px 10px; margin-right: 4px; }
+  </style>
+</head>
+<body>
+
+<h2>Whiteboard Test Client</h2>
+
+<!-- LOBBY -->
+<div id="lobby">
+  <h3>Select a Board</h3>
+  <button onclick="refreshBoards()">↻ Refresh</button>
+  <div id="board-list"></div>
+  <br>
+  <input id="new-board-name" type="text" placeholder="New board name…">
+  <button onclick="createBoard()">+ Create Board</button>
+</div>
+
+<!-- BOARD VIEW -->
+<div id="board-view">
+  <p>Current board: <span id="current-board"></span></p>
+  <button onclick="leaveBoard()">← Back to Boards</button>
+  <button onclick="addObject()">Add Object</button>
+  <button onclick="removeObject()">Remove Object</button>
+</div>
+
+<pre id="log"></pre>
+
+<script>
+const SERVER_URL = "http://13.40.61.155:5000";
+// EC2 IP
+
+const socket = io(SERVER_URL);
+let currentBoardId = null;
+
+function log(msg) {
+  document.getElementById("log").textContent += msg + "\n";
+}
+
+// ========================
+// CONNECTION
+// ========================
+
+socket.on("connect", () => {
+  log("Connected: " + socket.id);
+  refreshBoards();
+});
+
+// ========================
+// LOBBY — LIST / CREATE
+// ========================
+
+function refreshBoards() {
+  socket.emit("list_boards");
+}
+
+socket.on("LIST_BOARDS", (boards) => {
+  const container = document.getElementById("board-list");
+  container.innerHTML = "";
+
+  if (boards.length === 0) {
+    container.innerHTML = "<p>No boards yet.</p>";
+    return;
+  }
+
+  boards.forEach(b => {
+    const div = document.createElement("div");
+    div.className = "board-item";
+    div.textContent = b.name + " (" + b.board_id + ")";
+    div.onclick = () => joinBoard(b.board_id, b.name);
+    container.appendChild(div);
+  });
+});
+
+function createBoard() {
+  const input = document.getElementById("new-board-name");
+  const name = input.value.trim();
+  if (!name) return;
+
+  const board_id = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") + "_" + Date.now();
+
+  socket.emit("create_board", { board_id, name });
+  input.value = "";
+  log("Creating board: " + name);
+}
+
+socket.on("BOARD_CREATED", (data) => {
+  log("Board created: " + JSON.stringify(data));
+  refreshBoards();
+});
+
+// ========================
+// JOIN / LEAVE BOARD
+// ========================
+
+function joinBoard(boardId, boardName) {
+  currentBoardId = boardId;
+
+  document.getElementById("lobby").style.display = "none";
+  document.getElementById("board-view").style.display = "block";
+  document.getElementById("current-board").textContent = boardName + " (" + boardId + ")";
+
+  socket.emit("join_board", { board_id: boardId });
+  log("Joining board: " + boardId);
+}
+
+function leaveBoard() {
+  currentBoardId = null;
+
+  document.getElementById("board-view").style.display = "none";
+  document.getElementById("lobby").style.display = "block";
+
+  refreshBoards();
+  log("Left board");
+}
+
+// ========================
+// BOARD EVENTS
+// ========================
+
+// Receive full board state
+socket.on("LOAD_BOARD", data => {
+  log("LOAD_BOARD received:");
+  log(JSON.stringify(data, null, 2));
+});
+
+// Receive events from server
+socket.on("board_event", msg => {
+  log("board_event received:");
+  log(JSON.stringify(msg, null, 2));
+});
+
+// Send ADD_OBJECT event
+function addObject() {
+  if (!currentBoardId) { log("No board selected!"); return; }
+
+  const object = {
+    object_id: "obj_" + Math.floor(Math.random()*10000),
+    type: "stroke",
+    points: [[Math.floor(Math.random()*500), Math.floor(Math.random()*500)],
+             [Math.floor(Math.random()*500), Math.floor(Math.random()*500)]]
+  };
+
+  socket.emit("board_event", {
+    event: "ADD_OBJECT",
+    payload: object
+  });
+
+  log("Sent ADD_OBJECT to " + currentBoardId);
+}
+
+// Send REMOVE_OBJECT event
+function removeObject() {
+  if (!currentBoardId) { log("No board selected!"); return; }
+
+  const id = prompt("Enter object_id to remove:");
+
+  socket.emit("board_event", {
+    event: "REMOVE_OBJECT",
+    payload: { object_id: id }
+  });
+
+  log("Sent REMOVE_OBJECT to " + currentBoardId);
+}
+</script>
+
+</body>
+</html>
