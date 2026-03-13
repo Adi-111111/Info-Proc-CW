@@ -382,8 +382,8 @@ async def undo_last(_sid, data):
             redo_stacks.setdefault(board_id, []).append(payload)
 
         await sio.emit(
-            "board_event",
-            {"event": "REMOVE_OBJECT", "payload": {"object_id": object_id}},
+            "remove_object",
+            {"object_id": object_id},
             room=board_id,
         )
 

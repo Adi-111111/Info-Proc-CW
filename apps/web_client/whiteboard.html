@@ -282,7 +282,7 @@ body{
 
 #undo-btn{
   position:absolute;
-  top:16px;
+  top:32px;
   left:16px;
   z-index:10;
   padding:8px 18px;
@@ -302,7 +302,7 @@ body{
 
 #redo-btn{
   position:absolute;
-  top:16px;
+  top:32px;
   left:100px;
   z-index:10;
   padding:8px 18px;
@@ -557,6 +557,14 @@ socket.on("LOAD_BOARD", (data) => {
 socket.on("whiteboard_event", (shape) => {
   console.log("WHITEBOARD EVENT:", shape); 
   renderObject(shape); 
+});
+
+socket.on("remove_object", (payload) => {
+  console.log("REMOVE OBJECT:", payload);
+  removeObject(payload?.object_id);
+  if (canvas) {
+    canvas.renderAll();
+  }
 });
 
 
