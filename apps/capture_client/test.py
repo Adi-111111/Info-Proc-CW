@@ -23,7 +23,7 @@ PYNQ_IP = "192.168.2.99"
 PYNQ_PORT = 5005
 REPLY_PORT = 5006
 
-# Change this if your laptop's IP on the PYNQ link is different
+# Change if needed
 LAPTOP_REPLY_IP = "192.168.2.1"
 
 CLASS_NAMES = ["circle", "rectangle", "triangle", "line", "freehand"]
@@ -207,7 +207,6 @@ def classify_with_geometry(points):
     if not closed:
         return None
 
-    # Circle score
     circle_fit = fit_circle_kasa(points)
     circle_rel = None
     if circle_fit is not None:
@@ -215,23 +214,16 @@ def classify_with_geometry(points):
         if r > 10:
             circle_rel = rmse / max(1.0, r)
 
-    # Strong rectangle only if:
-    # 1) rectangle detector succeeds
-    # 2) shape is NOT too circle-like
     rect = try_rectangle(points, eps=0.05 * scale, right_angle_tol=35.0)
     if rect is not None:
         if circle_rel is None or circle_rel > 0.12:
             return "rectangle"
 
-    # Strong triangle only if:
-    # 1) triangle detector succeeds
-    # 2) shape is NOT too circle-like
     tri = try_triangle(points, eps=0.05 * scale)
     if tri is not None:
         if circle_rel is None or circle_rel > 0.12:
             return "triangle"
 
-    # Only call circle if polygon tests did not strongly win
     if circle_rel is not None and circle_rel < 0.16:
         return "circle"
 
@@ -239,29 +231,21 @@ def classify_with_geometry(points):
 
 
 def final_shape_decision(points, fpga_label):
-    # Never override freehand
     if fpga_label == "freehand":
         return "freehand"
 
     geom_label = classify_with_geometry(points)
 
-    # Only override circles, and only into strong polygon classes
     if fpga_label == "circle" and geom_label in ("triangle", "rectangle"):
         return geom_label
 
-    # Otherwise trust FPGA
     return fpga_label
 
 
 def quantize_features(features):
     f = np.array(features, dtype=float)
-
-    # first 64 = coordinates
     f[:64] = np.round(f[:64] * COORD_SCALE)
-
-    # last 6 = geometry
     f[64:] = np.round(f[64:] * GEOM_SCALE)
-
     f = np.clip(f, -128, 127).astype(np.int8)
     return f.tolist()
 
@@ -309,6 +293,98 @@ def poll_pynq_reply():
         return None
 
 
+# =========================================================
+# RENDER HELPERS
+# =========================================================
+def draw_polyline(canvas, points, thickness=3):
+    for i in range(1, len(points)):
+        cv2.line(
+            canvas,
+            tuple(map(int, points[i - 1])),
+            tuple(map(int, points[i])),
+            (255, 255, 255),
+            thickness
+        )
+
+
+def draw_clean_line(canvas, points, thickness=3):
+    if len(points) < 2:
+        return
+    a = points[0]
+    b = points[-1]
+    cv2.line(canvas, tuple(map(int, a)), tuple(map(int, b)), (255, 255, 255), thickness)
+
+
+def draw_clean_circle(canvas, points, thickness=3):
+    fit = fit_circle_kasa(points)
+    if fit is None:
+        draw_polyline(canvas, points, thickness)
+        return
+
+    cx, cy, r, rmse = fit
+    center = (int(round(cx)), int(round(cy)))
+    rr = int(round(r))
+
+    if rr > 0:
+        cv2.circle(canvas, center, rr, (255, 255, 255), thickness)
+    else:
+        draw_polyline(canvas, points, thickness)
+
+
+def order_polygon_vertices(corners):
+    pts = np.array(corners, dtype=np.float32)
+    c = np.mean(pts, axis=0)
+
+    def ang(p):
+        return np.arctan2(p[1] - c[1], p[0] - c[0])
+
+    pts = sorted(pts.tolist(), key=ang)
+    return [(int(round(x)), int(round(y))) for x, y in pts]
+
+
+def draw_clean_rectangle(canvas, points, thickness=3):
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    scale = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
+
+    rect = try_rectangle(points, eps=0.05 * scale, right_angle_tol=35.0)
+    if rect is None:
+        draw_polyline(canvas, points, thickness)
+        return
+
+    rect = order_polygon_vertices(rect)
+    pts = np.array(rect, dtype=np.int32).reshape((-1, 1, 2))
+    cv2.polylines(canvas, [pts], True, (255, 255, 255), thickness)
+
+
+def draw_clean_triangle(canvas, points, thickness=3):
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    scale = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
+
+    tri = try_triangle(points, eps=0.05 * scale)
+    if tri is None:
+        draw_polyline(canvas, points, thickness)
+        return
+
+    tri = order_polygon_vertices(tri)
+    pts = np.array(tri, dtype=np.int32).reshape((-1, 1, 2))
+    cv2.polylines(canvas, [pts], True, (255, 255, 255), thickness)
+
+
+def draw_final_shape(canvas, points, label, thickness=3):
+    if label == "line":
+        draw_clean_line(canvas, points, thickness)
+    elif label == "circle":
+        draw_clean_circle(canvas, points, thickness)
+    elif label == "rectangle":
+        draw_clean_rectangle(canvas, points, thickness)
+    elif label == "triangle":
+        draw_clean_triangle(canvas, points, thickness)
+    else:
+        draw_polyline(canvas, points, thickness)
+
+
 def open_camera():
     for idx in range(2):
         cap = cv2.VideoCapture(idx)
@@ -354,6 +430,7 @@ print("Using camera index:", cam_idx)
 canvas = None
 current = []
 last_completed_stroke = None
+pending_stroke_for_render = None
 
 xf = yf = None
 pen_down_prev = False
@@ -404,7 +481,7 @@ while True:
 
         cursor = (int(xf), int(yf))
 
-    # Draw current stroke
+    # Draw current stroke preview
     if pen_down and cursor is not None:
         if not current:
             current.append(cursor)
@@ -412,13 +489,11 @@ while True:
             if dist(cursor, current[-1]) >= 2.0:
                 current.append(cursor)
 
-    # Pen-up -> finalize stroke
+    # Pen-up -> send stroke, but do NOT commit to canvas yet
     if (not pen_down) and pen_down_prev and current:
         if len(current) >= MIN_POINTS:
             last_completed_stroke = current[:]
-
-            for i in range(1, len(current)):
-                cv2.line(canvas, current[i - 1], current[i], (255, 255, 255), 3)
+            pending_stroke_for_render = current[:]
 
             save_stroke_locally(current, label="test", root="holdout_test")
             send_features_to_pynq(current)
@@ -444,6 +519,10 @@ while True:
                 last_final_label = fpga_label
 
             print(f"[decision] FPGA={last_fpga_label} FINAL={last_final_label}")
+
+            if pending_stroke_for_render is not None:
+                draw_final_shape(canvas, pending_stroke_for_render, last_final_label, thickness=3)
+                pending_stroke_for_render = None
 
     # Display
     display = frame.copy()
@@ -480,6 +559,7 @@ while True:
         canvas[:] = 0
         current = []
         last_completed_stroke = None
+        pending_stroke_for_render = None
         last_fpga_label = "none"
         last_final_label = "none"
 
