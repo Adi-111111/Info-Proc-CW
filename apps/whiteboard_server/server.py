@@ -212,7 +212,9 @@ redo_stacks[DEFAULT_BOARD] = []
 #   stroke:    {"object_id": "...", "type": "stroke", "points": [[x,y], ...]}
 
 connected_clients = set()
+pynq_clients = set()
 last_event_time = {}
+active_pynq_board = DEFAULT_BOARD
 
 # =========================
 # CLIENT LIFECYCLE
@@ -226,6 +228,7 @@ async def connect(sid, environ):
 @sio.event
 async def disconnect(sid):
     connected_clients.discard(sid)
+    pynq_clients.discard(sid)
     logger.info(f"Client disconnected: {sid}")
 
 # =========================
@@ -289,11 +292,45 @@ async def delete_board(_sid, data):
 
 @sio.event
 async def register_pynq(sid, data=None):
+    global active_pynq_board
+    pynq_clients.add(sid)
+    board_id = (data or {}).get("board_id", active_pynq_board)
+    if board_id not in boards:
+        boards[board_id] = db_load_board(board_id)
+        board_order[board_id] = list(boards[board_id].keys())
+        redo_stacks[board_id] = []
+    active_pynq_board = board_id
     await sio.save_session(sid, {
         "client_type": "pynq",
-        "board_id": DEFAULT_BOARD,
+        "board_id": board_id,
     })
-    logger.info(f"{sid} registered as pynq on {DEFAULT_BOARD}")
+    logger.info(f"{sid} registered as pynq on {board_id}")
+
+
+@sio.event
+async def set_pynq_board(_sid, data):
+    global active_pynq_board
+    board_id = data["board_id"]
+
+    if board_id not in boards:
+        boards[board_id] = db_load_board(board_id)
+        board_order[board_id] = list(boards[board_id].keys())
+        redo_stacks[board_id] = []
+
+    active_pynq_board = board_id
+
+    for pynq_sid in list(pynq_clients):
+        try:
+            session = await sio.get_session(pynq_sid)
+        except KeyError:
+            pynq_clients.discard(pynq_sid)
+            continue
+
+        session["client_type"] = "pynq"
+        session["board_id"] = board_id
+        await sio.save_session(pynq_sid, session)
+
+    logger.info(f"Active PYNQ board set to {board_id}")
 
 
 @sio.event

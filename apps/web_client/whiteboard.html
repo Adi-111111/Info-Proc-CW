@@ -520,6 +520,7 @@ function joinBoard(boardId, boardName){
   }
 
   socket.emit("join_board", { board_id: boardId });
+  socket.emit("set_pynq_board", { board_id: boardId });
 }
 
 function leaveBoard(){
@@ -707,11 +708,13 @@ function pointsToPath(points){
 // ========================
 
 document.getElementById("undo-btn").addEventListener("click", () => {
-  socket.emit("undo_last", { board_id: BOARD_ID });
+  if (!currentBoardId) return;
+  socket.emit("undo_last", { board_id: currentBoardId });
 });
 
 document.getElementById("redo-btn").addEventListener("click", () => {
-  socket.emit("redo_last", { board_id: BOARD_ID });
+  if (!currentBoardId) return;
+  socket.emit("redo_last", { board_id: currentBoardId });
 });
 
 
