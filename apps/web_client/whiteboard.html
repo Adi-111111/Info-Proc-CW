@@ -507,18 +507,9 @@ socket.on("LOAD_BOARD", (data) => {
   }
 });
 
-socket.on("board_event", (msg) => {
-  const { event, payload } = msg;
-  if (event === "ADD_OBJECT"){
-    renderObject(payload);
-  }
-  if (event === "REMOVE_OBJECT"){
-    removeObject(payload.object_id);
-  }
-});
-
-socket.on("board_event", msg => {
-  console.log("BOARD EVENT:", msg);
+socket.on("whiteboard_event", (shape) => {
+  console.log("WHITEBOARD EVENT:", shape); 
+  renderObject(shape); 
 });
 
 
@@ -531,27 +522,35 @@ function renderObject(obj){
   console.log("OBJECT RECEIVED:", obj);
 
   // Convert PYNQ format → board format
-  if (obj.params){
-
-    obj.object_id = obj.id;
-
-    if ("points" in obj.params)
-      obj.points = obj.params.points;
-
-    if ("corners" in obj.params)
-      obj.corners = obj.params.corners;
-
-    if ("center" in obj.params){
-      obj.cx = obj.params.center[0];
-      obj.cy = obj.params.center[1];
-      obj.r  = obj.params.radius;
+  if (obj.params) 
+  {
+    if (!obj.object_id && obj.id) 
+    {
+      obj.object_id = obj.id;
     }
-    else if ("cx" in obj.params){
-      obj.cx = obj.params.cx;
-      obj.cy = obj.params.cy;
-      obj.r  = obj.params.r;
+
+    if (obj.type === "polyline" || obj.type === "stroke") {
+      obj.points = obj.params.points;
+    }
+
+    else if (obj.type === "rectangle" || obj.type === "rect") {
+      obj.corners = obj.params.corners;
+    }
+
+    else if (obj.type === "circle") {
+      if ("center" in obj.params) {
+        obj.cx = obj.params.center[0];
+        obj.cy = obj.params.center[1];
+        obj.r = obj.params.radius;
+      } else {
+        obj.cx = obj.params.cx;
+        obj.cy = obj.params.cy;
+        obj.r = obj.params.r;
+      }
     }
   }
+
+
 
   // ====================
   // POLYLINE

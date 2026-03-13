@@ -16,8 +16,8 @@ REMOTE_WEB_PID="$REMOTE_HOME/web_client.pid"
 LOCAL_SERVER="$REPO_DIR/apps/whiteboard_server/server.py"
 LOCAL_HTML="$REPO_DIR/apps/web_client/whiteboard.html"
 
-#scp -i "$SSH_KEY" "$LOCAL_SERVER" "$EC2_USER@$EC2_HOST:~"
-#scp -i "$SSH_KEY" "$LOCAL_HTML" "$EC2_USER@$EC2_HOST:~"
+scp -i "$SSH_KEY" "$LOCAL_SERVER" "$EC2_USER@$EC2_HOST:~"
+scp -i "$SSH_KEY" "$LOCAL_HTML" "$EC2_USER@$EC2_HOST:~"
 
 ssh -i "$SSH_KEY" "$EC2_USER@$EC2_HOST" "
 set -e
@@ -53,4 +53,3 @@ else
 fi
 "
 #exec ssh -tt -i "$SSH_KEY" "$EC2_USER@$EC2_HOST"
-

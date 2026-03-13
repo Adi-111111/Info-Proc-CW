@@ -281,80 +281,30 @@ async def register_pynq(sid, data=None):
 
 
 @sio.event
-async def pynq_event(sid, shape):
+async def pynq_event(sid, shape): 
     now = time.time()
-    if sid in last_event_time and now - last_event_time[sid] < 0.02:
+    if sid in last_event_time and now - last_event_time[sid] < 0.02: 
         return
-    last_event_time[sid] = now
-
-    try:
+    else: 
+        last_event_time[sid] = now
+    
+    try: 
         session = await sio.get_session(sid)
-        board_id = session.get("board_id")
+        board_id = session.get("board_id", DEFAULT_BOARD)
 
-        event = shape["event"]
-        payload = shape["payload"]
+        object_id = shape.get("object_id", {})
+        shape_type = shape.get("type", {})
+        params = shape.get("params",{})
 
-        if event == "ADD_OBJECT":
-            boards[board_id][payload["object_id"]] = payload
-            db_put_object(board_id, payload)
-
-        elif event == "REMOVE_OBJECT":
-            object_id = payload["object_id"]
-            boards[board_id].pop(object_id, None)
-            db_delete_object(board_id, object_id)
-
-        await sio.emit("board_event", shape, room=board_id)
-
-    except Exception:
-        logger.exception("Error handling pynq_event")
+        boards[board_id][object_id] = shape
+        db_put_object(board_id, shape)
+             
+        await sio.emit("whiteboard_event", shape, room=board_id)
+    
+    except Exception: 
+        logger.exception("Error receiving shape from pynq")
 
 
-@sio.event
-async def whiteboard_event(sid, shape):
-    now = time.time()
-    if sid in last_event_time and now - last_event_time[sid] < 0.02:
-        return
-    last_event_time[sid] = now
-
-    try:
-        session = await sio.get_session(sid)
-        board_id = session.get("board_id")
-
-        obj_id = shape.get("id")
-        obj_type = shape.get("type")
-        params = shape.get("params", {})
-
-        if not obj_id or not obj_type:
-            logger.warning("Invalid whiteboard_event")
-            return
-
-        payload = {
-            "object_id": obj_id,
-            "type": obj_type
-        }
-
-        if obj_type == "polyline":
-            payload["points"] = params.get("points", [])
-        elif obj_type == "rectangle":
-            payload["corners"] = params.get("corners", [])
-        else:
-            logger.warning(f"Unknown shape type: {obj_type}")
-            return
-
-        boards[board_id][obj_id] = payload
-        db_put_object(board_id, payload)
-
-        message = {"event": "ADD_OBJECT", "payload": payload}
-        await sio.emit("board_event", message, room=board_id)
-
-        logger.info(f"whiteboard_event → broadcast {obj_type}")
-
-    except Exception:
-        logger.exception("Error handling whiteboard_event")
-
-
-# =========================
 # RUN SERVER
-# =========================
 
 web.run_app(app, port=5000)
