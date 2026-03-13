@@ -1,7 +1,7 @@
 """
 PYNQ → Whiteboard bridge client
 
-Receives shape JSON from PYNQ over UDP
+Receives shape JSON from test.py over UDP
 and forwards it to the whiteboard server
 """
 
@@ -12,10 +12,11 @@ import uuid
 
 # CONFIG
 SERVER_URL = "http://13.40.61.155:5000"
-BOARD_ID = "board1" #how do we change this if we want to forward events to a different board?
 
-PYNQ_PORT = 5006 #this shouldnt change
 BUFFER_SIZE = 65535
+
+BRIDGE_IP = "127.0.0.1"
+BRIDGE_PORT = 5010
 
 
 # SOCKET.IO CLIENT
@@ -23,19 +24,19 @@ sio = socketio.Client(logger=True, engineio_logger=True)
 @sio.event
 def connect():
     sio.emit("register_pynq")
-    print("[SERVER Connected to server")
+    print("[SERVER] Connected to server")
 
 @sio.event
 def disconnect():
     print("[SERVER] Disconnected from server")
 
 
-# UDP SOCKET - COMMUNICATION WITH PYNQ
+# UDP SOCKET - COMMUNICATION WITH TEST.PY
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) #why are we using DGRAM? what are the other options?
-sock.bind(("0.0.0.0", PYNQ_PORT)) #which IP address and port program should listen on for incoming packets. 0.0.0.0 means listen on any network interface.
+sock.bind((BRIDGE_IP, BRIDGE_PORT)) #which IP address and port program should listen on for incoming packets.
 
-print("\n[UDP] Listening for shapes from PYNQ")
-print("[UDP] Port:", PYNQ_PORT)
+print("\n[UDP] Listening for shapes from laptop")
+print("[UDP] Port:", BRIDGE_PORT)
 
 
 # MAIN - Only start the UDP listening loop if this file is executed directly - might need to change this for bash scripts. 

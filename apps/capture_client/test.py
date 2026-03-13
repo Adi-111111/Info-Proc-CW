@@ -5,12 +5,12 @@ import json
 import socket
 from pathlib import Path
 import sys
-import os
-from pathlib import Path
+import threading
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from datetime import datetime
+from flask import Flask, Response
 # =========================================================
 # Import preprocessing
 # =========================================================
@@ -23,6 +23,8 @@ from preprocess import preprocess_to_vector
 PYNQ_IP = "192.168.2.99"
 PYNQ_PORT = 5005
 REPLY_PORT = 5006
+BRIDGE_IP = "127.0.0.1"
+BRIDGE_PORT = 5010
 
 # Change if needed
 LAPTOP_REPLY_IP = "192.168.2.1"
@@ -45,6 +47,9 @@ pynq_addr = (PYNQ_IP, PYNQ_PORT)
 recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 recv_sock.bind(("0.0.0.0", REPLY_PORT))
 recv_sock.setblocking(False)
+
+bridge_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+bridge_addr = (BRIDGE_IP, BRIDGE_PORT)
 
 # =========================================================
 # HELPERS
@@ -397,60 +402,82 @@ def open_camera():
         cap.release()
     return None, None
 
-# =========================================================
-# SHAPE SAVING
-# =========================================================
-SAVE_DIR = Path("shape_log")
-
-def save_shape_result(points, label):
-    SAVE_DIR.mkdir(exist_ok=True)
-    timestamp = time.time()
-    dt_str = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d_%H-%M-%S-%f")
-
-    entry = {
-        "timestamp": dt_str,
-        "timestamp_unix": round(timestamp, 3),
-        "label": label
+def build_whiteboard_shape(points, label):
+    timestamp_ms = int(time.time() * 1000)
+    shape = {
+        "object_id": f"obj_{timestamp_ms}",
+        "type": "stroke" if label in ("freehand", "line") else label,
+        "created_at": timestamp_ms,
+        "source": "capture_client",
     }
 
     if label == "circle":
         fit = fit_circle_kasa(points)
-        if fit is not None:
-            cx, cy, r, _ = fit
-            entry["cx"] = round(cx, 2)
-            entry["cy"] = round(cy, 2)
-            entry["r"]  = round(r,  2)
+        if fit is None:
+            return None
+        cx, cy, r, _ = fit
+        shape["cx"] = round(cx, 2)
+        shape["cy"] = round(cy, 2)
+        shape["r"] = round(r, 2)
+        shape["params"] = {
+            "cx": shape["cx"],
+            "cy": shape["cy"],
+            "r": shape["r"],
+        }
 
     elif label == "rectangle":
         xs = [p[0] for p in points]
         ys = [p[1] for p in points]
         scale = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
         rect = try_rectangle(points, eps=0.05 * scale, right_angle_tol=35.0)
-        if rect is not None:
-            rect = order_polygon_vertices(rect)
-            entry["corners"] = [[int(p[0]), int(p[1])] for p in rect]
+        if rect is None:
+            return None
+        rect = order_polygon_vertices(rect)
+        corners = [[int(p[0]), int(p[1])] for p in rect]
+        shape["corners"] = corners
+        shape["params"] = {"corners": corners}
 
     elif label == "triangle":
         xs = [p[0] for p in points]
         ys = [p[1] for p in points]
         scale = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
         tri = try_triangle(points, eps=0.05 * scale)
-        if tri is not None:
-            tri = order_polygon_vertices(tri)
-            entry["corners"] = [[int(p[0]), int(p[1])] for p in tri]
+        if tri is None:
+            return None
+        tri = order_polygon_vertices(tri)
+        corners = [[int(p[0]), int(p[1])] for p in tri]
+        shape["corners"] = corners
+        shape["params"] = {"corners": corners}
 
     elif label == "line":
-        entry["start"] = [int(points[0][0]),  int(points[0][1])]
-        entry["end"]   = [int(points[-1][0]), int(points[-1][1])]
+        line_points = [
+            [int(points[0][0]), int(points[0][1])],
+            [int(points[-1][0]), int(points[-1][1])],
+        ]
+        shape["points"] = line_points
+        shape["params"] = {"points": line_points}
 
     elif label == "freehand":
-        entry["points"] = [[int(p[0]), int(p[1])] for p in points]
+        stroke_points = [[int(p[0]), int(p[1])] for p in points]
+        shape["points"] = stroke_points
+        shape["params"] = {"points": stroke_points}
 
-    filename = SAVE_DIR / f"{label}_{dt_str}.json"
-    with open(filename, "w") as f:
-        json.dump(entry, f, indent=2)
+    else:
+        return None
 
-    print(f"[save] {filename}")
+    return shape
+
+
+def send_shape_to_bridge(points, label):
+    shape = build_whiteboard_shape(points, label)
+    if shape is None:
+        print(f"[bridge] failed to build shape for label '{label}'")
+        return False
+
+    bridge_sock.sendto(json.dumps(shape).encode("utf-8"), bridge_addr)
+    print(f"[bridge] sent {shape['type']} to {BRIDGE_IP}:{BRIDGE_PORT}")
+    return True
+
 
 
 # =========================================================
@@ -615,7 +642,7 @@ while True:
 
             if pending_stroke_for_render is not None:
                 draw_final_shape(canvas, pending_stroke_for_render, last_final_label, thickness=3)
-                save_shape_result(pending_stroke_for_render, last_final_label)
+                send_shape_to_bridge(pending_stroke_for_render, last_final_label)
                 pending_stroke_for_render = None
 
     # Display
