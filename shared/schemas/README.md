@@ -42,6 +42,11 @@ Sent by the server immediately after a client joins. Contains the full current b
     "cx": 150.5,
     "cy": 200.25,
     "r": 50.75
+  },
+  "obj_id_4": {
+    "object_id": "obj_id_4",
+    "type": "triangle",
+    "corners": [[100.0, 250.0], [200.0, 250.0], [150.0, 150.0]]
   }
 }
 ```
@@ -91,54 +96,24 @@ The primary event type for all board mutations. Wraps an inner event type and pa
 }
 ```
 
+#### `ADD_OBJECT` — Triangle
+```json
+{
+  "event": "ADD_OBJECT",
+  "payload": {
+    "object_id": "obj_12345",
+    "type": "triangle",
+    "corners": [[100.0, 250.0], [200.0, 250.0], [150.0, 150.0]]
+  }
+}
+```
+
 #### `REMOVE_OBJECT`
 ```json
 {
   "event": "REMOVE_OBJECT",
   "payload": {
     "object_id": "obj_12345"
-  }
-}
-```
-
----
-
-### `shape_event`
-**Direction**: PYNQ Bridge → Server
-
-Sent by the PYNQ bridge client after the PYNQ board has recognised a shape from a raw stroke. The server converts this into a `board_event` / `ADD_OBJECT` and broadcasts it.
-
-#### Polyline
-```json
-{
-  "id": "obj_12345",
-  "type": "polyline",
-  "params": {
-    "points": [[100, 200], [105, 205], [110, 210]]
-  }
-}
-```
-
-#### Rectangle
-```json
-{
-  "id": "obj_12345",
-  "type": "rectangle",
-  "params": {
-    "corners": [[100.0, 150.0], [200.0, 150.0], [200.0, 250.0], [100.0, 250.0]]
-  }
-}
-```
-
-#### Circle
-```json
-{
-  "id": "obj_12345",
-  "type": "circle",
-  "params": {
-    "cx": 150.5,
-    "cy": 200.25,
-    "r": 50.75
   }
 }
 ```
@@ -179,6 +154,14 @@ Recognised shape sent back to the PC after hardware processing.
 }
 ```
 
+#### Triangle
+```json
+{
+  "type": "triangle",
+  "corners": [[100.0, 250.0], [200.0, 250.0], [150.0, 150.0]]
+}
+```
+
 #### Stroke (fallback — no shape recognised)
 ```json
 {
@@ -196,4 +179,5 @@ Recognised shape sent back to the PC after hardware processing.
 | `stroke` | `points: [[x, y], ...]` |
 | `polyline` | `points: [[x, y], ...]` |
 | `rectangle` | `corners: [[x, y], [x, y], [x, y], [x, y]]` (top-left → clockwise) |
+| `triangle` | `corners: [[x, y], [x, y], [x, y]]` (three vertices) |
 | `circle` | `cx: float`, `cy: float`, `r: float` |

@@ -181,7 +181,7 @@ socket.on("board_event", msg => {
 
 // RENDERING
 // converts incoming object data into Fabric.js shapes
-// supports polylines, rectangles, circles 
+// supports polylines, rectangles, circles, triangles
 function renderObject(obj){
 
   console.log("OBJECT RECEIVED:", obj);
@@ -281,6 +281,33 @@ function renderObject(obj){
     });
 
     canvas.add(circle);
+  }
+
+
+  // ====================
+  // TRIANGLE
+  // ====================
+
+  if (obj.type === "triangle"){
+
+    if (!obj.corners){
+      console.warn("Triangle missing corners:", obj);
+      return;
+    }
+
+    const pts = obj.corners.map(c => ({
+      x:c[0],
+      y:c[1]
+    }));
+
+    const tri = new fabric.Polygon(pts,{
+      stroke:"black",
+      fill:"transparent",
+      strokeWidth:3,
+      objectId:obj.object_id
+    });
+
+    canvas.add(tri);
   }
 
   canvas.renderAll();

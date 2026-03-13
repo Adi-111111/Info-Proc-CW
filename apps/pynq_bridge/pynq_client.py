@@ -67,6 +67,12 @@ if __name__ == "__main__":
             print(json.dumps(shape, indent=2)) #Python Object -> JSON String
 
 
+            # Expected shape formats (examples):
+            #   circle:    {"type": "circle", "cx": 150.5, "cy": 200.25, "r": 50.75}
+            #   rectangle: {"type": "rectangle", "corners": [[x,y],[x,y],[x,y],[x,y]]}
+            #   triangle:  {"type": "triangle", "corners": [[x1,y1],[x2,y2],[x3,y3]]}
+            #   stroke:    {"type": "stroke", "points": [[x,y], ...]}
+
             # Check whether shape contains a type (has it been classified or not?)
             if "type" not in shape:
                 print("[ERROR] Missing 'type' field")

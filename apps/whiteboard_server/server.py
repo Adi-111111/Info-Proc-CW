@@ -20,6 +20,12 @@ sio = socketio.AsyncServer(
 app = web.Application() #create web server
 sio.attach(app) #attach websockets to the server to allow continuous information exchange between server and client 
 
+# Supported object types for board_event ADD_OBJECT:
+#   circle:    {"object_id": "...", "type": "circle", "cx": 150.5, "cy": 200.25, "r": 50.75}
+#   rectangle: {"object_id": "...", "type": "rectangle", "corners": [[x,y],[x,y],[x,y],[x,y]]}
+#   triangle:  {"object_id": "...", "type": "triangle", "corners": [[x1,y1],[x2,y2],[x3,y3]]}
+#   stroke:    {"object_id": "...", "type": "stroke", "points": [[x,y], ...]}
+
 #in memory board state
 boards = {} #dictionary storing board contents
 DEFAULT_BOARD = "board1"
