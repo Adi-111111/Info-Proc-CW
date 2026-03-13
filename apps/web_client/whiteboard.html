@@ -278,6 +278,48 @@ body{
   object-fit:cover;
 }
 
+/* UNDO BUTTON */
+
+#undo-btn{
+  position:absolute;
+  top:16px;
+  left:16px;
+  z-index:10;
+  padding:8px 18px;
+  font-size:14px;
+  font-family:Arial, sans-serif;
+  background:#222;
+  color:white;
+  border:none;
+  border-radius:6px;
+  cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,0,0,0.25);
+}
+
+#undo-btn:hover{
+  background:#444;
+}
+
+#redo-btn{
+  position:absolute;
+  top:16px;
+  left:100px;
+  z-index:10;
+  padding:8px 18px;
+  font-size:14px;
+  font-family:Arial, sans-serif;
+  background:#222;
+  color:white;
+  border:none;
+  border-radius:6px;
+  cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,0,0,0.25);
+}
+
+#redo-btn:hover{
+  background:#444;
+}
+
 /* small label */
 
 #camera-label{
@@ -335,6 +377,10 @@ body{
 
   <!-- WHITEBOARD (main UI) -->
   <canvas id="board"></canvas>
+
+  <!-- UNDO / REDO BUTTONS -->
+  <button id="undo-btn">&#8592; Undo</button>
+  <button id="redo-btn">Redo &#8594;</button>
 
   <!-- FLOATING CAMERA WINDOW -->
   <div id="camera-window">
@@ -515,8 +561,8 @@ socket.on("whiteboard_event", (shape) => {
 
 // ========================
 // RENDERING
-// ========================
-
+// converts incoming object data into Fabric.js shapes
+// supports polylines, rectangles, circles, triangles
 function renderObject(obj){
 
   console.log("OBJECT RECEIVED:", obj);
@@ -608,6 +654,33 @@ function renderObject(obj){
     canvas.add(circle);
   }
 
+
+  // ====================
+  // TRIANGLE
+  // ====================
+
+  if (obj.type === "triangle"){
+
+    if (!obj.corners){
+      console.warn("Triangle missing corners:", obj);
+      return;
+    }
+
+    const pts = obj.corners.map(c => ({
+      x:c[0],
+      y:c[1]
+    }));
+
+    const tri = new fabric.Polygon(pts,{
+      stroke:"black",
+      fill:"transparent",
+      strokeWidth:3,
+      objectId:obj.object_id
+    });
+
+    canvas.add(tri);
+  }
+
   canvas.renderAll();
 }
 
@@ -625,7 +698,21 @@ function pointsToPath(points){
     path += ` L ${points[i][0]} ${points[i][1]}`;
   }
   return path;
+
 }
+
+
+// ========================
+// UNDO BUTTON
+// ========================
+
+document.getElementById("undo-btn").addEventListener("click", () => {
+  socket.emit("undo_last", { board_id: BOARD_ID });
+});
+
+document.getElementById("redo-btn").addEventListener("click", () => {
+  socket.emit("redo_last", { board_id: BOARD_ID });
+});
 
 
 // ========================
