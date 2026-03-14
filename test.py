@@ -6,6 +6,9 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
+from metrics.metrics_script import MetricsLogger
+import uuid
+
 # =========================================================
 # Helpers
 # =========================================================
@@ -227,7 +230,7 @@ VIEW_SCALE_MAX = 3.0
 # =========================================================
 # MediaPipe
 # =========================================================
-model_path = "hand_landmarker.task"
+model_path = "preliminary/hand_landmarker.task"
 base_options = python.BaseOptions(model_asset_path=model_path)
 options = vision.HandLandmarkerOptions(
     base_options=base_options,
@@ -244,7 +247,7 @@ landmarker = vision.HandLandmarker.create_from_options(options)
 # =========================================================
 def open_camera():
     for idx in range(2):
-        cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)
+        cap = cv2.VideoCapture(idx)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         ok, frame = cap.read()
@@ -294,6 +297,12 @@ twohand_prev_mid = None
 twohand_prev_dist = None
 
 t0 = time.time()
+
+# metrics
+metrics = MetricsLogger()
+
+gesture_end_time = None
+gesture_id = None
 
 # =========================================================
 # Main loop
@@ -456,6 +465,10 @@ while True:
     # Pen-up: store the stroke, recognise AFTER pause
     # =====================================================
     if (not pen_down) and pen_down_prev and current:
+
+        gesture_id = str(uuid.uuid4()) #metrics
+        gesture_end_time = time.time()
+
         shape_buffer = current[:]
         shape_timer = time.time()
         strokes.append(current)
@@ -510,6 +523,19 @@ while True:
             for i in range(1, len(shape_buffer)):
                 cv2.line(canvas, shape_buffer[i - 1], shape_buffer[i], (255, 255, 255), 3)
             shape_label = "stroke"
+
+        classification_time = time.time() # metrics
+
+        if gesture_end_time is not None:
+            metrics.log(
+                gesture_id,
+                gesture_end_time,
+                classification_time,
+                shape_label
+            )
+
+        gesture_end_time = None
+        gesture_id = None
 
         shape_buffer = None
 

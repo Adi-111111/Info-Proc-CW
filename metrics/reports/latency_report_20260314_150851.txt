@@ -1,0 +1,19 @@
+Gesture Recognition Latency Report
+=================================
+
+Input file: metrics/gesture_metrics.csv
+Total gestures: 51
+
+Overall Latency Statistics (ms)
+-------------------------------
+Mean:   391.27
+Median: 391.40
+P95:    424.40
+P99:    426.20
+Std:    19.65
+
+Average Latency by Shape
+------------------------
+circle: 403.52 ms
+rect: 397.89 ms
+stroke: 389.45 ms
