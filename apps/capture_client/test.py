@@ -671,7 +671,7 @@ while True:
     cv2.putText(display, "Pinch to draw | C=clear | ESC=quit", (20, 140),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-    # cv2.imshow("FPGA Shape Classifier", display) -- debug window
+    cv2.imshow("FPGA Shape Classifier", display)
 
     latest_frame = display
 
