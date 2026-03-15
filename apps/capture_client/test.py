@@ -11,6 +11,7 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from datetime import datetime
 from flask import Flask, Response
+from apps.metrics.logger import log_event
 # =========================================================
 # Import preprocessing
 # =========================================================
@@ -402,12 +403,22 @@ def open_camera():
         cap.release()
     return None, None
 
-def build_whiteboard_shape(points, label):
-    timestamp_ms = int(time.time() * 1000)
+def build_whiteboard_shape(points, label, object_id):
+    #timestamp_ms = int(time.time() * 1000)   
+
+    shape_fully_classified = time.perf_counter() # metrics
+
+    log_event(
+        "shape_fully_classified",
+        object_id, 
+        timestamp=shape_fully_classified, 
+        component="gesture_input"
+    )
+
     shape = {
-        "object_id": f"obj_{timestamp_ms}",
+        "object_id": object_id,
         "type": "stroke" if label in ("freehand", "line") else label,
-        "created_at": timestamp_ms,
+        "created_at": shape_fully_classified_ms,
         "source": "capture_client",
     }
 
@@ -468,8 +479,8 @@ def build_whiteboard_shape(points, label):
     return shape
 
 
-def send_shape_to_bridge(points, label):
-    shape = build_whiteboard_shape(points, label)
+def send_shape_to_bridge(points, label, object_id):
+    shape = build_whiteboard_shape(points, label, object_id)
     if shape is None:
         print(f"[bridge] failed to build shape for label '{label}'")
         return False
@@ -543,6 +554,7 @@ canvas = None
 current = []
 last_completed_stroke = None
 pending_stroke_for_render = None
+last_object_id = None
 
 xf = yf = None
 pen_down_prev = False
@@ -611,6 +623,20 @@ while True:
 
     # Pen-up -> send stroke, but do NOT commit to canvas yet
     if (not pen_down) and pen_down_prev and current:
+        
+        gesture_end_time = time.perf_counter() #metrics
+
+        object_id = f"obj_{gesture_end_time}"
+
+        log_event(
+            "gesture_end",
+            object_id,
+            timestamp=gesture_end_time,
+            component="gesture_input"
+        )
+
+        last_object_id = object_id
+
         if len(current) >= MIN_POINTS:
             last_completed_stroke = current[:]
             pending_stroke_for_render = current[:]
@@ -626,6 +652,8 @@ while True:
 
     # Poll FPGA reply
     reply = poll_pynq_reply()
+
+
     if reply is not None:
         if "error" in reply:
             print("[udp] pynq error:", reply["error"])
@@ -642,7 +670,7 @@ while True:
 
             if pending_stroke_for_render is not None:
                 draw_final_shape(canvas, pending_stroke_for_render, last_final_label, thickness=3)
-                send_shape_to_bridge(pending_stroke_for_render, last_final_label)
+                send_shape_to_bridge(pending_stroke_for_render, last_final_label, last_object_id)
                 pending_stroke_for_render = None
 
     # Display

@@ -7,3 +7,4 @@ apps/whiteboard_server/Whiteboard-final.pem
 __pycache__/
 *.pyc
 holdout_test/test/
+apps/metrics/events.jsonl

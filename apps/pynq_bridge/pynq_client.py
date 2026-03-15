@@ -9,6 +9,8 @@ import socket
 import json
 import socketio
 import uuid
+from apps.metrics.logger import log_event
+import time
 
 # CONFIG
 SERVER_URL = "http://13.40.61.155:5000"
@@ -82,6 +84,14 @@ if __name__ == "__main__":
 
             print("\n[CLIENT] Sending to server:")
             print(json.dumps(shape, indent=2)) #Python Object -> JSON string
+
+            send_to_network = time.perf_counter() # metrics
+            log_event( 
+                "send_to_network",
+                shape["object_id"],
+                timestamp = send_to_network,
+                component="pynq_bridge"
+            )
 
             sio.emit("pynq_event", shape)
 

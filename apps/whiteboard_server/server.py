@@ -7,6 +7,8 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from decimal import Decimal
+from flask import Flask, request
+import json
 
 MAX_OBJECTS = 5000
 
@@ -421,6 +423,19 @@ async def redo_last(_sid, data):
     except Exception:
         logger.exception("Error handling redo_last")
 
+# Metrics
+
+app = Flask(__name__)
+
+@app.route("/metrics", methods=["POST"])
+def metrics():
+
+    entry = request.json
+
+    with open("apps/metrics/events.jsonl", "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+    return "", 200
 
 # RUN SERVER
 
