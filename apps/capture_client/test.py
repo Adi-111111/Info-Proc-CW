@@ -418,7 +418,7 @@ def build_whiteboard_shape(points, label, object_id):
     shape = {
         "object_id": object_id,
         "type": "stroke" if label in ("freehand", "line") else label,
-        "created_at": shape_fully_classified_ms,
+        "created_at": shape_fully_classified * 1000, # ms
         "source": "capture_client",
     }
 

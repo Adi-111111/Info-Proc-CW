@@ -2,17 +2,21 @@ import json
 import time
 import os
 
-LOG_FILE = "metrics/events.jsonl"
+LOG_FILE = "apps/metrics/events.jsonl"
 
-os.makedirs("metrics", exist_ok=True)
+os.makedirs("apps/metrics", exist_ok=True)
 
 
-def log_event(event, gesture_id):
+def log_event(event, object_id, timestamp=None, component=None):
+
+    if timestamp is None:
+        timestamp = time.perf_counter()
 
     entry = {
-        "gesture_id": gesture_id,
+        "object_id": object_id,
         "event": event,
-        "timestamp": time.perf_counter()
+        "timestamp": timestamp,
+        "component": component
     }
 
     with open(LOG_FILE, "a") as f:
