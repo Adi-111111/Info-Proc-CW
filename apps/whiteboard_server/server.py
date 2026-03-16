@@ -10,12 +10,14 @@ from decimal import Decimal
 import json
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parents[1]   # apps/
-METRICS_DIR = BASE_DIR / "metrics"
-METRICS_FILE = METRICS_DIR / "events.jsonl"
+#BASE_DIR = Path(__file__).resolve().parents[1]   # apps/
+#METRICS_DIR = BASE_DIR / "metrics"
+#METRICS_FILE = METRICS_DIR / "events.jsonl"
+
+METRICS_FILE = Path(__file__).resolve().parent / "events.jsonl"
 
 def log_metric(entry: dict):
-    METRICS_DIR.mkdir(parents=True, exist_ok=True)
+    #METRICS_DIR.mkdir(parents=True, exist_ok=True)
     with open(METRICS_FILE, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
