@@ -9,7 +9,7 @@ from botocore.exceptions import ClientError
 from decimal import Decimal
 from aiohttp import web
 import json
-from apps.metrics.logger import log_event
+# from apps.metrics.logger import log_event
 
 MAX_OBJECTS = 5000
 
