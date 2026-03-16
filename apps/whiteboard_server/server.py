@@ -428,14 +428,10 @@ async def redo_last(_sid, data):
 
 async def metrics(request):
 
-    data = await request.json()
+    entry = await request.json()
 
-    log_event(
-        event=data.get("event"),
-        object_id=data.get("object_id"),
-        timestamp=data.get("timestamp"),
-        component=data.get("component")
-    )
+    with open("apps/metrics/events.jsonl", "a") as f:
+        f.write(json.dumps(entry) + "\n")
 
     return web.Response(
         status=200,
