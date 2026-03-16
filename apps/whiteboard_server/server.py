@@ -425,17 +425,17 @@ async def redo_last(_sid, data):
 
 # Metrics
 
-app = Flask(__name__)
+#app = Flask(__name__)
 
-@app.route("/metrics", methods=["POST"])
-def metrics():
+#@app.route("/metrics", methods=["POST"])
+#def metrics():
 
-    entry = request.json
+#    entry = request.json
 
-    with open("apps/metrics/events.jsonl", "a") as f:
-        f.write(json.dumps(entry) + "\n")
+#  with open("apps/metrics/events.jsonl", "a") as f:
+#       f.write(json.dumps(entry) + "\n")
 
-    return "", 200
+# return "", 200
 
 # RUN SERVER
 

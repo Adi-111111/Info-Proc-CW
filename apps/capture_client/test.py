@@ -11,7 +11,7 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from datetime import datetime
 from flask import Flask, Response
-from apps.metrics.logger import log_event
+# from apps.metrics.logger import log_event
 # =========================================================
 # Import preprocessing
 # =========================================================
@@ -406,14 +406,14 @@ def open_camera():
 def build_whiteboard_shape(points, label, object_id):
     #timestamp_ms = int(time.time() * 1000)   
 
-    shape_fully_classified = time.perf_counter() # metrics
+    # shape_fully_classified = time.perf_counter() # metrics
 
-    log_event(
-        "shape_fully_classified",
-        object_id, 
-        timestamp=shape_fully_classified, 
-        component="gesture_input"
-    )
+    #log_event(
+    #    "shape_fully_classified",
+    #    object_id, 
+    #    timestamp=shape_fully_classified, 
+    #    component="gesture_input"
+    #)
 
     shape = {
         "object_id": object_id,
@@ -628,12 +628,12 @@ while True:
 
         object_id = f"obj_{gesture_end_time}"
 
-        log_event(
-            "gesture_end",
-            object_id,
-            timestamp=gesture_end_time,
-            component="gesture_input"
-        )
+        #log_event(
+        #    "gesture_end",
+        #    object_id,
+        #    timestamp=gesture_end_time,
+        #    component="gesture_input"
+        #)
 
         last_object_id = object_id
 
