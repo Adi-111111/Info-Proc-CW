@@ -7,7 +7,6 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from decimal import Decimal
-from aiohttp import web
 import json
 # from apps.metrics.logger import log_event
 
@@ -427,17 +426,25 @@ async def redo_last(_sid, data):
 # Metrics
 
 async def metrics(request):
+    try:
+        entry = await request.json()
+        logger.info(f"METRIC RECEIVED: {entry}")
 
-    entry = await request.json()
+        os.makedirs("apps/metrics", exist_ok=True)
 
-    with open("apps/metrics/events.jsonl", "a") as f:
-        f.write(json.dumps(entry) + "\n")
+        with open("apps/metrics/events.jsonl", "a") as f:
+            f.write(json.dumps(entry) + "\n")
 
-    return web.Response(
-        status=200,
-        headers={"Access-Control-Allow-Origin": "*"}
-    )
+        return web.json_response({"status": "ok"}, headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Allow-Methods": "POST, OPTIONS"
+        })
 
+    except Exception as e:
+        logger.exception("Metrics logging failed")
+        return web.Response(status=500)
+    
 app.router.add_post("/metrics", metrics)
 
 # RUN SERVER
