@@ -499,6 +499,7 @@ socket.on("BOARD_DELETED", () => {
 });
 
 // metrics 
+/*
 function logEvent(event, objectId){
 
     fetch(`${SERVER_URL}/metrics`, {
@@ -513,6 +514,7 @@ function logEvent(event, objectId){
     }).catch(err => console.warn("Metrics failed:", err));
 
 }
+*/
 
 // ========================
 // JOIN / LEAVE BOARD
@@ -571,7 +573,7 @@ socket.on("LOAD_BOARD", (data) => {
 
 socket.on("whiteboard_event", (shape) => {
 
-  logEvent("whiteboard_receive", shape.object_id) // metrics
+  //logEvent("whiteboard_receive", shape.object_id) // metrics
 
   console.log("WHITEBOARD EVENT:", shape); 
   renderObject(shape); 
@@ -710,7 +712,7 @@ function renderObject(obj){
 
   canvas.renderAll();
 
-  logEvent("render_done", obj.object_id) // metrics
+  //logEvent("render_done", obj.object_id) // metrics
 }
 
 

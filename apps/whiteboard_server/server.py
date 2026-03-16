@@ -8,7 +8,16 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from decimal import Decimal
 import json
-# from apps.metrics.logger import log_event
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parents[1]   # apps/
+METRICS_DIR = BASE_DIR / "metrics"
+METRICS_FILE = METRICS_DIR / "events.jsonl"
+
+def log_metric(entry: dict):
+    METRICS_DIR.mkdir(parents=True, exist_ok=True)
+    with open(METRICS_FILE, "a") as f:
+        f.write(json.dumps(entry) + "\n")
 
 MAX_OBJECTS = 5000
 
@@ -348,6 +357,10 @@ async def pynq_event(sid, shape):
         board_id = session.get("board_id", DEFAULT_BOARD)
 
         object_id = shape.get("object_id", {})
+        if not object_id:
+            logger.warning("Received shape without object_id")
+            return
+
         boards.setdefault(board_id, {})
         board_order.setdefault(board_id, [])
         redo_stacks.setdefault(board_id, [])
@@ -355,7 +368,22 @@ async def pynq_event(sid, shape):
         board_order[board_id].append(object_id)
         db_put_object(board_id, shape)
 
+        log_metric({  # metrics
+            "event": "whiteboard_receive",
+            "timestamp": time.time(),
+            "board_id": board_id,
+            "object_id": object_id,
+            "shape_type": shape.get("type"),
+        })
+
         await sio.emit("whiteboard_event", shape, room=board_id)
+
+        log_metric({  # metrics
+            "event": "render_done", 
+            "timestamp": time.time(),
+            "board_id": board_id,
+            "object_id": object_id,
+        })
     
     except Exception: 
         logger.exception("Error receiving shape from pynq")
@@ -422,30 +450,6 @@ async def redo_last(_sid, data):
 
     except Exception:
         logger.exception("Error handling redo_last")
-
-# Metrics
-
-async def metrics(request):
-    try:
-        entry = await request.json()
-        logger.info(f"METRIC RECEIVED: {entry}")
-
-        os.makedirs("apps/metrics", exist_ok=True)
-
-        with open("apps/metrics/events.jsonl", "a") as f:
-            f.write(json.dumps(entry) + "\n")
-
-        return web.json_response({"status": "ok"}, headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "Content-Type",
-            "Access-Control-Allow-Methods": "POST, OPTIONS"
-        })
-
-    except Exception as e:
-        logger.exception("Metrics logging failed")
-        return web.Response(status=500)
-    
-app.router.add_post("/metrics", metrics)
 
 # RUN SERVER
 
