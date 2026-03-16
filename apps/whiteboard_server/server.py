@@ -9,6 +9,7 @@ from botocore.exceptions import ClientError
 from decimal import Decimal
 from aiohttp import web
 import json
+from apps.metrics.logger import log_event
 
 MAX_OBJECTS = 5000
 
@@ -426,12 +427,20 @@ async def redo_last(_sid, data):
 # Metrics
 
 async def metrics(request):
-    entry = await request.json()
 
-    with open("apps/metrics/events.jsonl", "a") as f:
-        f.write(json.dumps(entry) + "\n")
+    data = await request.json()
 
-    return web.Response(status=200)
+    log_event(
+        event=data.get("event"),
+        object_id=data.get("object_id"),
+        timestamp=data.get("timestamp"),
+        component=data.get("component")
+    )
+
+    return web.Response(
+        status=200,
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
 
 app.router.add_post("/metrics", metrics)
 
