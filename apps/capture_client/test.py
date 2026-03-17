@@ -406,19 +406,16 @@ def open_camera():
 def build_whiteboard_shape(points, label, object_id):
     timestamp_ms = int(time.time() * 1000)   
 
-    shape_fully_classified = time.perf_counter() # metrics
-
-    log_event(
+    log_event( # metrics
         "shape_fully_classified",
-        object_id, 
-        timestamp=shape_fully_classified, 
+        object_id,  
         component="gesture_input"
     )
 
     shape = {
         "object_id": object_id,
         "type": "stroke" if label in ("freehand", "line") else label,
-        "created_at": shape_fully_classified * 1000, # ms
+        "created_at": timestamp_ms, 
         "source": "capture_client",
     }
 
@@ -624,14 +621,13 @@ while True:
     # Pen-up -> send stroke, but do NOT commit to canvas yet
     if (not pen_down) and pen_down_prev and current:
         
-        gesture_end_time = time.perf_counter() #metrics
+        gesture_end_time = time.time() 
 
         object_id = f"obj_{gesture_end_time}"
 
-        log_event(
+        log_event( #metrics
             "gesture_end",
             object_id,
-            timestamp=gesture_end_time,
             component="gesture_input"
         )
 

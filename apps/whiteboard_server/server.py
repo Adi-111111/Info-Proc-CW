@@ -9,17 +9,14 @@ from botocore.exceptions import ClientError
 from decimal import Decimal
 import json
 from pathlib import Path
+from logger import log_event
 
-#BASE_DIR = Path(__file__).resolve().parents[1]   # apps/
-#METRICS_DIR = BASE_DIR / "metrics"
-#METRICS_FILE = METRICS_DIR / "events.jsonl"
 
-METRICS_FILE = Path(__file__).resolve().parent / "events.jsonl"
+# Ensure relative paths (like apps/metrics/events.jsonl) work correctly
+BASE_DIR = Path(__file__).resolve().parent
+os.chdir(BASE_DIR)
+os.makedirs("apps/metrics", exist_ok=True)
 
-def log_metric(entry: dict):
-    #METRICS_DIR.mkdir(parents=True, exist_ok=True)
-    with open(METRICS_FILE, "a") as f:
-        f.write(json.dumps(entry) + "\n")
 
 MAX_OBJECTS = 5000
 
@@ -370,22 +367,19 @@ async def pynq_event(sid, shape):
         board_order[board_id].append(object_id)
         db_put_object(board_id, shape)
 
-        log_metric({  # metrics
-            "event": "whiteboard_receive",
-            "timestamp": time.time(),
-            "board_id": board_id,
-            "object_id": object_id,
-            "shape_type": shape.get("type"),
-        })
+        log_event(
+            "whiteboard_receive",
+            object_id,
+            component="server"
+        )
 
         await sio.emit("whiteboard_event", shape, room=board_id)
 
-        log_metric({  # metrics
-            "event": "render_done", 
-            "timestamp": time.time(),
-            "board_id": board_id,
-            "object_id": object_id,
-        })
+        log_event(
+            "render_done",
+            object_id,
+            component="server"
+        )
     
     except Exception: 
         logger.exception("Error receiving shape from pynq")

@@ -10,7 +10,7 @@ os.makedirs("apps/metrics", exist_ok=True)
 def log_event(event, object_id, timestamp=None, component=None):
 
     if timestamp is None:
-        timestamp = time.perf_counter()
+        timestamp = time.time()
 
     entry = {
         "object_id": object_id,
