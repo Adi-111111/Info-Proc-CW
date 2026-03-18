@@ -26,15 +26,12 @@ REPLY_PORT = 5006
 BRIDGE_IP = "127.0.0.1"
 BRIDGE_PORT = 5010
 
-# Change if needed
-LAPTOP_REPLY_IP = "192.168.2.1"
-
 CLASS_NAMES = ["circle", "rectangle", "triangle", "line", "freehand"]
 
 COORD_SCALE = 127
 GEOM_SCALE = 32
 
-PINCH_THRESH_PX = 80
+PINCH_THRESH_PX = 45
 SMOOTH_ALPHA = 0.25
 MIN_POINTS = 5
 
@@ -74,6 +71,22 @@ def save_stroke_locally(points, label="test", root="holdout_test"):
 
 def dist(a, b):
     return float(np.hypot(a[0] - b[0], a[1] - b[1]))
+
+
+def detect_reply_ip(remote_ip, remote_port):
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # Connecting a UDP socket lets the OS choose the correct local interface.
+        probe.connect((remote_ip, remote_port))
+        return probe.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        probe.close()
+
+
+LAPTOP_REPLY_IP = detect_reply_ip(PYNQ_IP, PYNQ_PORT)
+print(f"[udp] reply IP set to {LAPTOP_REPLY_IP}:{REPLY_PORT}")
 
 
 def angle_deg(u, v):
