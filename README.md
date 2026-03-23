@@ -1,6 +1,10 @@
-# Info-Proc-CW
+# Gesture-Based Collaborative Whiteboard
 
-Welcome to our Information Processing Coursework. Our project was a shared virtual whiteboard that captures the position of your hand and converts it into shapes on the whiteboard. We ran a shape classiification via a Neural Network on the PYNQ-Z1 PL. 
+This project demonstrates a collaborative whiteboard system combining gesture-based interaction, FPGA acceleration, and cloud communication. The system enables real-time multi-user interaction while maintaining low latency through local processing of gesture data.
+
+[![Watch the video](https://img.youtube.com/vi/ka_kZNjIJMg/0.jpg)](https://youtu.be/ka_kZNjIJMg)
+
+Our project was a shared virtual whiteboard that captures the position of your hand and converts it into shapes on the whiteboard. We ran a shape classiification via a Neural Network on the PYNQ-Z1 PL. 
 
 ## Requirements
 
