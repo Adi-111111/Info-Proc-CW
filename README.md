@@ -4,7 +4,6 @@ This project demonstrates a collaborative whiteboard system combining gesture-ba
 
 [![Watch the video](https://img.youtube.com/vi/ka_kZNjIJMg/0.jpg)](https://youtu.be/ka_kZNjIJMg)
 
-Our project was a shared virtual whiteboard that captures the position of your hand and converts it into shapes on the whiteboard. We ran a shape classiification via a Neural Network on the PYNQ-Z1 PL. 
 
 ## Requirements
 
