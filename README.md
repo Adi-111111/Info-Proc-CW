@@ -39,3 +39,11 @@ We have created bash scripts to make the process easier once the PEM key is in t
 - `./scripts/host.sh` (to host the server and serve the html files)
 - `./scripts/kill.sh` (corresponding script to kill processes on the EC2 instance)
 - `./scripts.run_clients.sh` (captures webcam footage from your laptop, scripts that send and receive data to the PYNQ PS, forwards shapes to the server)
+
+## Summary for Execution
+This is the repeatable set of instructions after doing the Requirement and Setup Steps: 
+1. Connect PYNQ board and run `Updated.ipynb` in the mlp folder
+2. Host server and serve html files using `./scripts/host.sh`
+3. Run the local scripts using `./scripts/run_clients.sh`
+4. View the whiteboard at this URL: 
+http://13.40.61.155:8000/whiteboard.html
